@@ -1,0 +1,10 @@
+# go-gpuimage .gitignore
+
+.task
+.DS_Store
+bin/
+/frame.png
+/texture.png
+/texture-updated.png
+*.wasm
+*.test

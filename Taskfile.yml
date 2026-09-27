@@ -1,0 +1,192 @@
+# go-gpuimage - Copyright (c) 2026 Neomantra Corp.
+
+version: '3'
+
+tasks:
+  default:
+    desc: 'Default task runs the "test" and "build" tasks'
+    deps:
+      - test
+      - build
+
+  list:
+    desc: 'Lists available tasks'
+    cmds:
+      - task --list-all
+
+###############################################################################
+
+  go-tidy:
+    desc: 'Go tidy all the things'
+    run: once
+    cmds:
+      - go mod tidy
+
+  go-update:
+    desc: 'Go update all the dependencies'
+    run: once
+    cmds:
+      - go get -u ./...
+
+  build:
+    desc: 'Build all the things'
+    deps:
+      - build-examples
+      - build-browsertest
+      - build-wasm
+
+  clean:
+    desc: 'Clean built binaries and example output'
+    cmds:
+      - rm -rf bin
+      - rm -f frame.png texture.png texture-updated.png
+      - rm -rf .task
+
+###############################################################################
+# Tests without a GPU. These are what CI runs.
+
+  test:
+    desc: 'Run helper and executor tests with the race detector (no GPU)'
+    cmds:
+      - go test -race ./...
+
+  vet:
+    desc: 'Vet native and WASM builds'
+    cmds:
+      - go vet ./...
+      - GOOS=js GOARCH=wasm go vet ./...
+
+  build-wasm:
+    desc: 'Compile every package for GOOS=js GOARCH=wasm'
+    cmds:
+      - GOOS=js GOARCH=wasm go build ./...
+
+  test-wasm:
+    desc: 'Run helper tests under Node, which has no WebGPU'
+    cmds:
+      - GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" .
+
+  ci:
+    desc: 'Run everything CI runs'
+    cmds:
+      - task: test
+      - task: vet
+      - task: build-wasm
+      - task: test-wasm
+
+###############################################################################
+# Tests on a real GPU. Run them outside any sandbox that hides the GPU. They
+# log the adapter; a CPU or fallback adapter does not establish hardware
+# support.
+
+  test-gpu:
+    desc: 'Run GPU tests on a native adapter (never with -race)'
+    env:
+      GPUIMAGE_GPU_TEST: '1'
+    cmds:
+      - go test -count=1 -v ./...
+
+  bench:
+    desc: 'Benchmark GPU clear and readback (never with -race; optional BACKEND=metal or vulkan)'
+    vars:
+      BENCHTIME: '{{.BENCHTIME | default "1s"}}'
+      COUNT: '{{.COUNT | default "3"}}'
+    env:
+      GPUIMAGE_GPU_TEST: '1'
+      GPUIMAGE_BENCH_BACKEND: '{{.BACKEND | default ""}}'
+    cmds:
+      - go test -run='^$' -bench=BenchmarkRenderReadback -benchmem -benchtime={{.BENCHTIME}} -count={{.COUNT}} .
+
+  build-browsertest:
+    desc: 'Build the headless Chrome test runner'
+    cmds:
+      - go build -o bin/browsertest ./internal/browsertest
+    sources:
+      - internal/browsertest/*.go
+      - go.mod
+    generates:
+      - bin/browsertest
+
+  test-browser:
+    desc: 'Run GPU tests in headless Chrome with WebGPU (set CHROME to choose a browser)'
+    deps:
+      - build-browsertest
+    env:
+      GPUIMAGE_GPU_TEST: '1'
+      GOOS: js
+      GOARCH: wasm
+    cmds:
+      - go test -count=1 -v -exec="{{.ROOT_DIR}}/bin/browsertest" .
+
+  test-vulkan:
+    desc: 'Run GPU tests on Vulkan under the validation layer (Linux)'
+    cmds:
+      - sh scripts/vulkan-validate.sh
+
+  test-vulkan-remote:
+    desc: 'Copy this tree to HOST over ssh and run test-vulkan there: task test-vulkan-remote HOST=name'
+    requires:
+      vars: [HOST]
+    vars:
+      REMOTE_DIR: '{{.REMOTE_DIR | default "/tmp/go-gpuimage-vulkan"}}'
+    cmds:
+      - rsync -az --delete --exclude .git --exclude bin --exclude .task ./ {{.HOST}}:{{.REMOTE_DIR}}/
+      - ssh {{.HOST}} 'cd {{.REMOTE_DIR}} && sh scripts/vulkan-validate.sh'
+
+  validate:
+    desc: 'Run CI checks, then GPU tests natively and in the browser'
+    cmds:
+      - task: ci
+      - task: test-gpu
+      - task: test-browser
+
+###############################################################################
+# Examples
+
+  build-examples:
+    desc: 'Build all examples'
+    deps:
+      - build-ex-clear
+      - build-ex-texture
+
+  build-ex-clear:
+    desc: 'Build the clear example'
+    cmds:
+      - go build -o bin/go-gpuimage-clear ./examples/clear
+    sources:
+      - '*.go'
+      - examples/clear/*.go
+      - go.mod
+    generates:
+      - bin/go-gpuimage-clear
+
+  build-ex-texture:
+    desc: 'Build the texture example'
+    cmds:
+      - go build -o bin/go-gpuimage-texture ./examples/texture
+    sources:
+      - '*.go'
+      - examples/texture/*.go
+      - go.mod
+    generates:
+      - bin/go-gpuimage-texture
+
+  run-examples:
+    desc: 'Run all examples on the GPU, writing PNG files to bin/'
+    cmds:
+      - task: run-ex-clear
+      - task: run-ex-texture
+
+  run-ex-clear:
+    desc: 'Render a cleared target to bin/clear.png'
+    deps:
+      - build-ex-clear
+    cmds:
+      - bin/go-gpuimage-clear -out bin/clear.png
+
+  run-ex-texture:
+    desc: 'Render a sampled texture to bin/texture.png and bin/texture-updated.png'
+    deps:
+      - build-ex-texture
+    cmds:
+      - bin/go-gpuimage-texture -out bin/texture.png -updated bin/texture-updated.png
