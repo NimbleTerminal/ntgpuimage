@@ -12,11 +12,17 @@ The library manages the render target, texture resources, GPU execution, and
 readback. Shaders, pipelines, buffers, and drawing use upstream WebGPU types
 directly.
 
-The API is unreleased and may change before its first version.
+The current release is v0.1.0. The API may change before v1.0.
 [DESIGN.md](DESIGN.md) explains the design and compares related GoGPU libraries.
 [VALIDATION.md](VALIDATION.md) records what was tested and how.
 
 ## Quickstart
+
+Install the library:
+
+```sh
+go get github.com/NimbleMarkets/go-gpuimage@v0.1.0
+```
 
 ```go
 import (

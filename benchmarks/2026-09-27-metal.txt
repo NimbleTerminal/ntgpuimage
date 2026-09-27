@@ -1,0 +1,66 @@
+# Date: 2026-09-27
+# System: Apple M3 Max; macOS 27.0 arm64; Go 1.27.1
+# Library source: v0.1.0; benchmark: renderer_bench_test.go in this tree
+# Dependencies: wgpu v0.34.5, naga v0.19.0
+# Command: GPUIMAGE_GPU_TEST=1 GPUIMAGE_BENCH_BACKEND=metal go test -run='^$' -bench=BenchmarkRenderReadback -benchmem -benchtime=1s -count=3 .
+
+goos: darwin
+goarch: arm64
+pkg: github.com/NimbleMarkets/go-gpuimage
+cpu: Apple M3 Max
+BenchmarkRenderReadback/640x400/Background-16         	    2120	    626212 ns/op	1635.23 MB/s	 1040256 B/op	     383 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/640x400/Background-16         	    2074	    567830 ns/op	1803.36 MB/s	 1040282 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/640x400/Background-16         	    2260	    587310 ns/op	1743.54 MB/s	 1040354 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/640x400/Cancellable-16        	    1846	    641492 ns/op	1596.28 MB/s	 1039649 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/640x400/Cancellable-16        	    1926	    666180 ns/op	1537.12 MB/s	 1039688 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/640x400/Cancellable-16        	    1810	    644911 ns/op	1587.82 MB/s	 1039649 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Background-16        	    1782	    656949 ns/op	5611.39 MB/s	 3703171 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Background-16        	    1856	    649439 ns/op	5676.28 MB/s	 3703179 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Background-16        	    1796	    656686 ns/op	5613.64 MB/s	 3703178 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Cancellable-16       	    1614	    713158 ns/op	5169.12 MB/s	 3702328 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Cancellable-16       	    1687	    769237 ns/op	4792.28 MB/s	 3702336 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1280x720/Cancellable-16       	    1606	    758430 ns/op	4860.57 MB/s	 3702341 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Background-16       	    1448	    820161 ns/op	10113.14 MB/s	 8315266 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Background-16       	    1452	    816291 ns/op	10161.08 MB/s	 8315277 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Background-16       	    1460	    820631 ns/op	10107.34 MB/s	 8315283 B/op	     384 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-16      	    1242	    939267 ns/op	8830.71 MB/s	 8314405 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-16      	    1262	    962155 ns/op	8620.65 MB/s	 8314421 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-16      	    1227	    954092 ns/op	8693.50 MB/s	 8314410 B/op	     343 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-16
+    renderer_bench_test.go:47: adapter: "Apple M3 Max" backend=Metal type=DiscreteGPU
+PASS
+ok  	github.com/NimbleMarkets/go-gpuimage	22.429s

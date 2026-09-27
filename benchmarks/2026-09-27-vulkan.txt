@@ -1,0 +1,65 @@
+# Date: 2026-09-27
+# System: NVIDIA GB10; driver 580.178.04; Ubuntu 24.04.5 arm64; Go 1.26.8
+# Library source: v0.1.0; benchmark: renderer_bench_test.go in this tree
+# Dependencies: wgpu v0.34.5, naga v0.19.0
+# Command: VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json GPUIMAGE_GPU_TEST=1 GPUIMAGE_BENCH_BACKEND=vulkan go test -run='^$' -bench=BenchmarkRenderReadback -benchmem -benchtime=1s -count=3 .
+
+goos: linux
+goarch: arm64
+pkg: github.com/NimbleMarkets/go-gpuimage
+BenchmarkRenderReadback/640x400/Background-20         	    2628	    480071 ns/op	2133.02 MB/s	 1037429 B/op	     143 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/640x400/Background-20         	    3279	    506770 ns/op	2020.64 MB/s	 1037360 B/op	     143 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/640x400/Background-20         	    2804	    440964 ns/op	2322.18 MB/s	 1037131 B/op	     142 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/640x400/Cancellable-20        	    1471	    756058 ns/op	1354.39 MB/s	 1038088 B/op	     154 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/640x400/Cancellable-20        	    1659	    671397 ns/op	1525.18 MB/s	 1037881 B/op	     154 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/640x400/Cancellable-20        	    2570	    683574 ns/op	1498.01 MB/s	 1038075 B/op	     154 allocs/op
+--- BENCH: BenchmarkRenderReadback/640x400/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Background-20        	    1930	    645701 ns/op	5709.15 MB/s	 3702531 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Background-20        	    1549	    784808 ns/op	4697.20 MB/s	 3702619 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Background-20        	    1968	    767510 ns/op	4803.07 MB/s	 3702599 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Cancellable-20       	    1395	    938223 ns/op	3929.13 MB/s	 3703103 B/op	     156 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Cancellable-20       	    1444	    956134 ns/op	3855.53 MB/s	 3703095 B/op	     156 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1280x720/Cancellable-20       	    1330	    886961 ns/op	4156.22 MB/s	 3703059 B/op	     156 allocs/op
+--- BENCH: BenchmarkRenderReadback/1280x720/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Background-20       	    1203	   1033404 ns/op	8026.29 MB/s	 8315088 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Background-20       	    1036	   1083498 ns/op	7655.21 MB/s	 8314931 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Background-20       	    1108	   1076599 ns/op	7704.26 MB/s	 8314927 B/op	     145 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Background-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-20      	     936	   1199094 ns/op	6917.22 MB/s	 8315854 B/op	     157 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-20      	     952	   1213620 ns/op	6834.43 MB/s	 8315544 B/op	     157 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+BenchmarkRenderReadback/1920x1080/Cancellable-20      	     915	   1164981 ns/op	7119.77 MB/s	 8315558 B/op	     157 allocs/op
+--- BENCH: BenchmarkRenderReadback/1920x1080/Cancellable-20
+    renderer_bench_test.go:47: adapter: "NVIDIA GB10" backend=Vulkan type=IntegratedGPU
+PASS
+ok  	github.com/NimbleMarkets/go-gpuimage	29.755s

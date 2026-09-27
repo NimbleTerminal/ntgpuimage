@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-09-27
 
 Initial version:
 
@@ -14,3 +14,4 @@ Initial version:
 - Frame timing statistics and adapter information.
 - Examples for clearing a target and sampling an uploaded image.
 - Native, browser, and Vulkan validation tasks.
+- Clear-and-readback benchmarks with recorded Metal and Vulkan results.
