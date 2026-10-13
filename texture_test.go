@@ -1,4 +1,4 @@
-package gpuimage
+package ntgpuimage
 
 import (
 	"context"

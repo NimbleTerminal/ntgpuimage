@@ -1,4 +1,4 @@
-module github.com/NimbleMarkets/go-gpuimage
+module nimbleterminal.dev/ntgpuimage
 
 go 1.25.0
 

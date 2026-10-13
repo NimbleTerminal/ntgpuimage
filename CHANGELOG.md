@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — 2026-10-13
+
+- Moved to `nimbleterminal.dev/ntgpuimage` (GitHub `NimbleTerminal/ntgpuimage`).
+  The Go package is now `ntgpuimage` and error strings carry that prefix.
+  `github.com/NimbleMarkets/go-gpuimage` v0.1.0 remains available but will
+  not receive updates.
+
 ## 0.1.0 — 2026-09-27
 
 Initial version:

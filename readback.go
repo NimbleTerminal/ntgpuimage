@@ -1,4 +1,4 @@
-package gpuimage
+package ntgpuimage
 
 import (
 	"context"
@@ -25,13 +25,13 @@ func alignedBytesPerRow(width int) int {
 func depad(dst, src []byte, width, height, bytesPerRow int) error {
 	row := width * 4
 	if bytesPerRow < row {
-		return fmt.Errorf("gpuimage: bytesPerRow %d smaller than row %d", bytesPerRow, row)
+		return fmt.Errorf("ntgpuimage: bytesPerRow %d smaller than row %d", bytesPerRow, row)
 	}
 	if len(dst) < row*height {
-		return fmt.Errorf("gpuimage: dst has %d bytes, need %d", len(dst), row*height)
+		return fmt.Errorf("ntgpuimage: dst has %d bytes, need %d", len(dst), row*height)
 	}
 	if need := bytesPerRow*(height-1) + row; len(src) < need {
-		return fmt.Errorf("gpuimage: src has %d bytes, need %d", len(src), need)
+		return fmt.Errorf("ntgpuimage: src has %d bytes, need %d", len(src), need)
 	}
 	for y := range height {
 		copy(dst[y*row:(y+1)*row], src[y*bytesPerRow:y*bytesPerRow+row])

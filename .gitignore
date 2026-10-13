@@ -1,4 +1,4 @@
-# go-gpuimage .gitignore
+# ntgpuimage .gitignore
 
 .task
 .DS_Store

@@ -1,4 +1,4 @@
-# go-gpuimage - Copyright (c) 2026 Neomantra Corp.
+# ntgpuimage - Copyright (c) 2026 Neomantra Corp.
 
 version: '3'
 
@@ -128,7 +128,7 @@ tasks:
     requires:
       vars: [HOST]
     vars:
-      REMOTE_DIR: '{{.REMOTE_DIR | default "/tmp/go-gpuimage-vulkan"}}'
+      REMOTE_DIR: '{{.REMOTE_DIR | default "/tmp/ntgpuimage-vulkan"}}'
     cmds:
       - rsync -az --delete --exclude .git --exclude bin --exclude .task ./ {{.HOST}}:{{.REMOTE_DIR}}/
       - ssh {{.HOST}} 'cd {{.REMOTE_DIR}} && sh scripts/vulkan-validate.sh'
@@ -152,24 +152,24 @@ tasks:
   build-ex-clear:
     desc: 'Build the clear example'
     cmds:
-      - go build -o bin/go-gpuimage-clear ./examples/clear
+      - go build -o bin/ntgpuimage-clear ./examples/clear
     sources:
       - '*.go'
       - examples/clear/*.go
       - go.mod
     generates:
-      - bin/go-gpuimage-clear
+      - bin/ntgpuimage-clear
 
   build-ex-texture:
     desc: 'Build the texture example'
     cmds:
-      - go build -o bin/go-gpuimage-texture ./examples/texture
+      - go build -o bin/ntgpuimage-texture ./examples/texture
     sources:
       - '*.go'
       - examples/texture/*.go
       - go.mod
     generates:
-      - bin/go-gpuimage-texture
+      - bin/ntgpuimage-texture
 
   run-examples:
     desc: 'Run all examples on the GPU, writing PNG files to bin/'
@@ -182,11 +182,11 @@ tasks:
     deps:
       - build-ex-clear
     cmds:
-      - bin/go-gpuimage-clear -out bin/clear.png
+      - bin/ntgpuimage-clear -out bin/clear.png
 
   run-ex-texture:
     desc: 'Render a sampled texture to bin/texture.png and bin/texture-updated.png'
     deps:
       - build-ex-texture
     cmds:
-      - bin/go-gpuimage-texture -out bin/texture.png -updated bin/texture-updated.png
+      - bin/ntgpuimage-texture -out bin/texture.png -updated bin/texture-updated.png

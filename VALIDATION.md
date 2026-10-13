@@ -60,7 +60,7 @@ task test-vulkan-remote HOST=gpu-host    # replace gpu-host with your SSH host
 ```
 
 The script uses an installed validation layer. If none is available, it
-unpacks the `vulkan-validationlayers` package under `~/.cache/go-gpuimage`
+unpacks the `vulkan-validationlayers` package under `~/.cache/ntgpuimage`
 on the test machine without installing it system-wide.
 
 ## Cancellation

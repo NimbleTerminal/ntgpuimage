@@ -11,9 +11,9 @@ import (
 	"log"
 	"os"
 
-	gpuimage "github.com/NimbleMarkets/go-gpuimage"
 	"github.com/gogpu/gputypes"
 	"github.com/gogpu/wgpu"
+	"nimbleterminal.dev/ntgpuimage"
 )
 
 // The quad's UVs are listed rather than derived from its positions: naga
@@ -49,14 +49,14 @@ func main() {
 
 func run(first, second string) error {
 	ctx := context.Background()
-	r, err := gpuimage.New(ctx, gpuimage.Options{Width: 256, Height: 256})
+	r, err := ntgpuimage.New(ctx, ntgpuimage.Options{Width: 256, Height: 256})
 	if err != nil {
 		return err
 	}
 	defer r.Close()
 
 	// Nearest filtering keeps the 8x8 checkerboard's cells sharp when enlarged.
-	tex, err := r.UploadTexture(checkerboard(color.NRGBA{R: 230, G: 120, B: 40, A: 255}), gpuimage.TextureOptions{Filter: gputypes.FilterModeNearest})
+	tex, err := r.UploadTexture(checkerboard(color.NRGBA{R: 230, G: 120, B: 40, A: 255}), ntgpuimage.TextureOptions{Filter: gputypes.FilterModeNearest})
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func run(first, second string) error {
 		return err
 	}
 
-	draw := func(f *gpuimage.Frame) error {
+	draw := func(f *ntgpuimage.Frame) error {
 		pass, err := f.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 			ColorAttachments: []wgpu.RenderPassColorAttachment{{
 				View: f.Color, LoadOp: gputypes.LoadOpClear, StoreOp: gputypes.StoreOpStore,

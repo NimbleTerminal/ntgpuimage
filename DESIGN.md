@@ -1,6 +1,6 @@
 # Design
 
-go-gpuimage manages offscreen render targets, image textures, GPU execution,
+ntgpuimage manages offscreen render targets, image textures, GPU execution,
 and pixel readback. Callers use WebGPU types directly for shaders,
 pipelines, buffers, and drawing.
 
@@ -39,7 +39,7 @@ else comes from reading source.
 | wgpu | [`HeadlessSurfaceTarget`](https://github.com/gogpu/wgpu/blob/v0.34.5/surface_target.go#L54-L65) is implemented only by the software backend. Metal, Vulkan, DX12, GLES, and the browser reject it. |
 | gogpu | [`NewHeadlessRenderer`](https://github.com/gogpu/gogpu/blob/v0.54.0/renderer.go#L298-L349) and [`RenderToImage`](https://github.com/gogpu/gogpu/blob/v0.54.0/renderer.go#L1751-L1806) exist and default to the software backend. The target is BGRA8Unorm, created per call, with no depth attachment and no resize. Ran: on Metal a custom pass recorded through `Context.CommandEncoder()` is dropped, because `RenderToImage` never submits the frame encoder. |
 | gg | Draws only its own 2D primitives ([accelerator.go#L104-L140](https://github.com/gogpu/gg/blob/v0.52.5/accelerator.go#L104-L140)). Its depth-stencil texture is internal. |
-| go-gpuimage | Persistent RGBA8Unorm target with optional Depth24Plus, resized in place, drawn by caller pipelines. |
+| ntgpuimage | Persistent RGBA8Unorm target with optional Depth24Plus, resized in place, drawn by caller pipelines. |
 
 ### Image upload, samplers, updates, and alpha
 
@@ -48,7 +48,7 @@ else comes from reading source.
 | wgpu | [`Queue.WriteTexture`](https://github.com/gogpu/wgpu/blob/v0.34.5/queue_native.go#L344) only. It pads rows internally, so a tight `4*width` stride is accepted. No `image.Image` helper, no sampler or bind group convenience, and no documented texture alpha convention. |
 | gogpu | [`NewTextureFromImage`, `UpdateData`, `UpdateRegion`](https://github.com/gogpu/gogpu/blob/v0.54.0/texture.go#L208-L269) are methods on `gogpu.Renderer` and use its private device and private bind group layout. Alpha is premultiplied ([texture.go#L251-L260](https://github.com/gogpu/gogpu/blob/v0.54.0/texture.go#L251-L260)). |
 | gg | Internal image cache; uploads premultiplied RGBA8Unorm ([context_image.go#L389-L390](https://github.com/gogpu/gg/blob/v0.52.5/context_image.go#L389-L390)). No in-place update. Fixed bilinear sampler. |
-| go-gpuimage | `UploadTexture` from any `image.Image`, straight alpha, linear or nearest, in-place `Update`, exported bind group and layout. |
+| ntgpuimage | `UploadTexture` from any `image.Image`, straight alpha, linear or nearest, in-place `Update`, exported bind group and layout. |
 
 ### Readback, row alignment, asynchronous mapping, cancellation
 
@@ -60,7 +60,7 @@ else comes from reading source.
 | wgpu | In the browser [`Device.Poll` is a no-op](https://github.com/gogpu/wgpu/blob/v0.34.5/device_browser.go#L338-L340). Nothing keeps the page ticking while a map is pending. |
 | gogpu | One private helper for its own target ([renderer.go#L1810-L1902](https://github.com/gogpu/gogpu/blob/v0.54.0/renderer.go#L1810-L1902)). No context. It checks `MapPending.Status()` once after polling, which cannot succeed where polling is a no-op. |
 | gg | Internal, blocking, `context.Background()` ([render_session.go#L2670-L2769](https://github.com/gogpu/gg/blob/v0.52.5/internal/gpu/render_session.go#L2670-L2769)), and bound to gg's resolve texture. |
-| go-gpuimage | One shared path: copy, `MapAsync`, poll on the executor thread, cancellable wait, `Unmap` on cancel, de-pad into a new `image.NRGBA`, plus a `requestAnimationFrame` pump in the browser. |
+| ntgpuimage | One shared path: copy, `MapAsync`, poll on the executor thread, cancellable wait, `Unmap` on cancel, de-pad into a new `image.NRGBA`, plus a `requestAnimationFrame` pump in the browser. |
 
 ### Ownership, shutdown, resizing, threads
 
@@ -70,7 +70,7 @@ else comes from reading source.
 | gogpu | Owns instance, adapter, and device. Importing the root package locks the main goroutine to its thread at init on macOS ([init.go#L28-L32](https://github.com/gogpu/gogpu/blob/v0.54.0/internal/platform/darwin/init.go#L28-L32)). `RenderToImage` is documented as not safe for concurrent use. |
 | gg | One process-global accelerator bound to one device. Never releases a device it was given. No executor. |
 | gpucontext | Interfaces and opaque handles. It states no threading rule. |
-| go-gpuimage | One device per `Renderer`, all calls serialized on one pinned goroutine, a failed `Resize` keeps the old target, `Close` releases everything including textures still open. |
+| ntgpuimage | One device per `Renderer`, all calls serialized on one pinned goroutine, a failed `Resize` keeps the old target, `Close` releases everything including textures still open. |
 
 The executor serializes frames and keeps map waits on the submitting
 thread. This is a design choice, not a Metal requirement.
@@ -82,7 +82,7 @@ thread. This is a design choice, not a Metal requirement.
 | wgpu | Texture creation, render passes with depth, `WriteTexture`, `CopyTextureToBuffer`, and buffer mapping are implemented for Metal, Vulkan, DX12, GLES, software, and the browser. Only Metal, software, and Chrome were run. The browser backend is `*_browser.go` plus `internal/browser`; it has no usage tracking, and [`PopErrorScope` panics as unimplemented](https://github.com/gogpu/wgpu/blob/v0.34.5/device_browser.go#L317-L327). |
 | gogpu | Compiles for `js/wasm`. The headless readback was not run in a browser. |
 | gg | The root package compiles for `js/wasm` as a CPU rasterizer. `gg/gpu` does not: it imports `wgpu/core`, which is native only. |
-| go-gpuimage | Ran on Metal and in headless Chrome 154 on the same machine (`vendor=apple architecture=metal-3`, not a fallback adapter). |
+| ntgpuimage | Ran on Metal and in headless Chrome 154 on the same machine (`vendor=apple architecture=metal-3`, not a fallback adapter). |
 
 ### Sharing a device, and interoperating with gg
 

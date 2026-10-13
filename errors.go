@@ -1,4 +1,4 @@
-package gpuimage
+package ntgpuimage
 
 import "errors"
 
@@ -8,11 +8,11 @@ type Error struct {
 	Err error
 }
 
-func (e *Error) Error() string { return "gpuimage: " + e.Op + ": " + e.Err.Error() }
+func (e *Error) Error() string { return "ntgpuimage: " + e.Op + ": " + e.Err.Error() }
 func (e *Error) Unwrap() error { return e.Err }
 
 // ErrClosed is returned by every Renderer method after Close.
-var ErrClosed = errors.New("gpuimage: renderer closed")
+var ErrClosed = errors.New("ntgpuimage: renderer closed")
 
 // ErrNoAdapter is returned by New when the instance reports no GPU adapter.
-var ErrNoAdapter = errors.New("gpuimage: no GPU adapter available")
+var ErrNoAdapter = errors.New("ntgpuimage: no GPU adapter available")

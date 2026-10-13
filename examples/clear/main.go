@@ -8,9 +8,9 @@ import (
 	"log"
 	"os"
 
-	gpuimage "github.com/NimbleMarkets/go-gpuimage"
 	"github.com/gogpu/gputypes"
 	"github.com/gogpu/wgpu"
+	"nimbleterminal.dev/ntgpuimage"
 )
 
 func main() {
@@ -23,12 +23,12 @@ func main() {
 
 func run(path string) error {
 	ctx := context.Background()
-	r, err := gpuimage.New(ctx, gpuimage.Options{Width: 640, Height: 480})
+	r, err := ntgpuimage.New(ctx, ntgpuimage.Options{Width: 640, Height: 480})
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-	img, _, err := r.Render(ctx, func(f *gpuimage.Frame) error {
+	img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
 		pass, err := f.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 			ColorAttachments: []wgpu.RenderPassColorAttachment{{
 				View: f.Color, LoadOp: gputypes.LoadOpClear, StoreOp: gputypes.StoreOpStore,

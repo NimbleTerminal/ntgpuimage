@@ -8,7 +8,7 @@
 # The layer comes from the system if the vulkan-validationlayers package is
 # installed. Otherwise the script unpacks that package, without installing
 # it, under GPUIMAGE_VK_LAYER_ROOT, which defaults to
-# ~/.cache/go-gpuimage/vulkan-validationlayers. That needs apt-get and dpkg.
+# ~/.cache/ntgpuimage/vulkan-validationlayers. That needs apt-get and dpkg.
 set -eu
 
 manifest=VkLayer_khronos_validation.json
@@ -20,7 +20,7 @@ for dir in /usr/share/vulkan/explicit_layer.d /etc/vulkan/explicit_layer.d /usr/
 done
 
 if [ -z "$system" ]; then
-	root=${GPUIMAGE_VK_LAYER_ROOT:-$HOME/.cache/go-gpuimage/vulkan-validationlayers}
+	root=${GPUIMAGE_VK_LAYER_ROOT:-$HOME/.cache/ntgpuimage/vulkan-validationlayers}
 	layers=$root/usr/share/vulkan/explicit_layer.d
 	if [ ! -f "$layers/$manifest" ]; then
 		if ! command -v apt-get >/dev/null || ! command -v dpkg >/dev/null; then

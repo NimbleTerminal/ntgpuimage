@@ -1,4 +1,4 @@
-package gpuimage
+package ntgpuimage
 
 import (
 	"bytes"
@@ -97,7 +97,7 @@ func TestDepadRejectsShortBuffers(t *testing.T) {
 
 func TestErrorFormatsWithPrefix(t *testing.T) {
 	e := &Error{Op: "submit", Err: ErrNoAdapter}
-	if got, want := e.Error(), "gpuimage: submit: gpuimage: no GPU adapter available"; got != want {
+	if got, want := e.Error(), "ntgpuimage: submit: ntgpuimage: no GPU adapter available"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 	if e.Unwrap() != ErrNoAdapter {

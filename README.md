@@ -1,7 +1,7 @@
-# go-gpuimage
+# ntgpuimage
 
-[`go-gpuimage`](https://github.com/NimbleMarkets/go-gpuimage) is an offscreen WebGPU rendering for Golang, built on
-[gogpu/wgpu](https://github.com/gogpu/wgpu). The Go package is `gpuimage`.
+[`ntgpuimage`](https://github.com/NimbleTerminal/ntgpuimage) is an offscreen WebGPU rendering for Golang, built on
+[gogpu/wgpu](https://github.com/gogpu/wgpu). The Go package is `ntgpuimage`, imported as `nimbleterminal.dev/ntgpuimage`.
 
 Render into a GPU texture with your own shaders, upload and sample Go
 images, and read pixels back as `*image.NRGBA`. There is no window and no
@@ -21,7 +21,7 @@ The current release is v0.1.0. The API may change before v1.0.
 Install the library:
 
 ```sh
-go get github.com/NimbleMarkets/go-gpuimage@v0.1.0
+go get nimbleterminal.dev/ntgpuimage@v0.2.0
 ```
 
 ```go
@@ -29,17 +29,17 @@ import (
 	"github.com/gogpu/gputypes"
 	"github.com/gogpu/wgpu"
 
-	gpuimage "github.com/NimbleMarkets/go-gpuimage"
+	"nimbleterminal.dev/ntgpuimage"
 )
 
-r, err := gpuimage.New(ctx, gpuimage.Options{Width: 640, Height: 480, Depth: true})
-if err != nil { /* errors.Is(err, gpuimage.ErrNoAdapter), or device creation failed */ }
+r, err := ntgpuimage.New(ctx, ntgpuimage.Options{Width: 640, Height: 480, Depth: true})
+if err != nil { /* errors.Is(err, ntgpuimage.ErrNoAdapter), or device creation failed */ }
 defer r.Close()
 
 // Create pipelines, shaders, and buffers on the renderer's GPU thread.
 err = r.Do(func(dev *wgpu.Device) error { /* dev.CreateRenderPipeline(...) */ return nil })
 
-img, stats, err := r.Render(ctx, func(f *gpuimage.Frame) error {
+img, stats, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
 	// f.Device.Queue().WriteBuffer(...) updates uniforms for this frame.
 	pass, err := f.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		ColorAttachments: []wgpu.RenderPassColorAttachment{{
@@ -102,7 +102,7 @@ go run ./examples/texture -out texture.png  # upload, sample, update, read back
 ## Sampled images
 
 ```go
-tile, err := r.UploadTexture(sourceImage, gpuimage.TextureOptions{})
+tile, err := r.UploadTexture(sourceImage, ntgpuimage.TextureOptions{})
 if err != nil { /* handle error */ }
 defer tile.Close()
 
@@ -272,8 +272,8 @@ Raw output, including throughput and allocations:
 
 We welcome contributions and feedback.  Please adhere to our [Code of Conduct](./CODE_OF_CONDUCT.md) when engaging our community.
 
- * [GitHub Issues](https://github.com/NimbleMarkets/go-gpuimage/issues)
- * [GitHub Pull Requests](https://github.com/NimbleMarkets/go-gpuimage/pulls)
+ * [GitHub Issues](https://github.com/NimbleTerminal/ntgpuimage/issues)
+ * [GitHub Pull Requests](https://github.com/NimbleTerminal/ntgpuimage/pulls)
 
 ## Acknowledgements
 

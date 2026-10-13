@@ -1,6 +1,6 @@
 //go:build js && wasm
 
-package gpuimage
+package ntgpuimage
 
 import (
 	"syscall/js"

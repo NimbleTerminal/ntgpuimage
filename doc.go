@@ -1,4 +1,4 @@
-// Package gpuimage provides offscreen WebGPU rendering, texture upload and
+// Package ntgpuimage provides offscreen WebGPU rendering, texture upload and
 // sampling, and optional pixel readback into Go images. It uses gogpu/wgpu's
 // native and browser backends and exposes upstream types for custom drawing.
 //
@@ -35,4 +35,4 @@
 // gogpu's browser backend otherwise emits stencilLoadOp/stencilStoreOp,
 // which WebGPU rejects for a format with no stencil aspect; native backends
 // ignore the flag for a depth-only attachment.
-package gpuimage
+package ntgpuimage
