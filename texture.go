@@ -2,6 +2,7 @@ package ntgpuimage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -20,14 +21,54 @@ type Texture struct {
 	view          *wgpu.TextureView
 	sampler       *wgpu.Sampler
 	group         *wgpu.BindGroup
+	depthTex      *wgpu.Texture     // nil unless TextureOptions.Depth
+	depthView     *wgpu.TextureView // nil unless TextureOptions.Depth
 	width, height int
-	closed        bool // accessed only on the renderer executor
+	renderTarget  bool
+
+	// The fields below are accessed only on the renderer executor.
+	closed bool
+	// written is set once pixels have been uploaded or a RenderTo pass has
+	// completed, so ReadPixels can refuse a texture with undefined contents.
+	written bool
+	// drawn is set once a RenderTo pass has completed. gogpu's usage tracker
+	// then holds the attachment usage for good, and ReadPixels must not copy
+	// from the texture directly; see readPixelsByBlit.
+	drawn bool
 }
 
-// TextureOptions controls the sampling filter. Zero selects linear filtering.
-// Nearest filtering is useful for pixel art or an atlas without padded tiles.
+// TextureOptions configures UploadTexture and NewTexture.
 type TextureOptions struct {
+	// Filter selects the sampling filter. Zero selects linear filtering.
+	// Nearest filtering is useful for pixel art or an atlas without padded
+	// tiles.
 	Filter gputypes.FilterMode
+	// RenderTarget also allows the texture to be drawn into with
+	// Frame.RenderTo. A render target keeps its fixed size: to change it,
+	// create a new texture and close the old one.
+	RenderTarget bool
+	// Depth allocates a Depth24Plus attachment alongside the color texture,
+	// exposed as Frame.Depth inside Frame.RenderTo. It requires RenderTarget.
+	Depth bool
+}
+
+func (o TextureOptions) validate(op string) error {
+	if o.Depth && !o.RenderTarget {
+		return &Error{Op: op, Err: errors.New("Depth requires RenderTarget")}
+	}
+	return nil
+}
+
+// filter returns the sampler filter to use, or an error for an unknown one.
+func (o TextureOptions) filter(op string) (gputypes.FilterMode, error) {
+	filter := o.Filter
+	if filter == 0 {
+		filter = gputypes.FilterModeLinear
+	}
+	if filter != gputypes.FilterModeLinear && filter != gputypes.FilterModeNearest {
+		return 0, &Error{Op: op, Err: fmt.Errorf("invalid filter %v", filter)}
+	}
+	return filter, nil
 }
 
 // UploadTexture copies an image into a sampled GPU texture. The source image
@@ -35,32 +76,66 @@ type TextureOptions struct {
 // this method returns. Close the Texture when it is no longer needed, or let
 // Renderer.Close release it with the device.
 func (r *Renderer) UploadTexture(src image.Image, opts TextureOptions) (*Texture, error) {
+	const op = "upload texture"
 	if r.closed.Load() {
 		return nil, ErrClosed
 	}
-	filter := opts.Filter
-	if filter == 0 {
-		filter = gputypes.FilterModeLinear
+	if err := opts.validate(op); err != nil {
+		return nil, err
 	}
-	if filter != gputypes.FilterModeLinear && filter != gputypes.FilterModeNearest {
-		return nil, &Error{Op: "upload texture", Err: fmt.Errorf("invalid filter %v", filter)}
-	}
-	// Reject an unusable image from its bounds, before copying its pixels.
-	w, h, err := imageSize("upload texture", src)
+	filter, err := opts.filter(op)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.checkTextureSize("upload texture", w, h); err != nil {
+	// Reject an unusable image from its bounds, before copying its pixels.
+	w, h, err := imageSize(op, src)
+	if err != nil {
 		return nil, err
 	}
-	pixels := packPixels(src)
-	var result *Texture
+	if err := r.checkTextureSize(op, w, h); err != nil {
+		return nil, err
+	}
+	return r.createTexture(packPixels(src), w, h, filter, opts)
+}
+
+// NewTexture allocates a w×h texture with undefined contents. Write it with
+// Update or, for a RenderTarget, with Frame.RenderTo before sampling or
+// reading it. Close the Texture when it is no longer needed, or let
+// Renderer.Close release it with the device.
+func (r *Renderer) NewTexture(w, h int, opts TextureOptions) (*Texture, error) {
+	const op = "new texture"
+	if r.closed.Load() {
+		return nil, ErrClosed
+	}
+	if err := opts.validate(op); err != nil {
+		return nil, err
+	}
+	filter, err := opts.filter(op)
+	if err != nil {
+		return nil, err
+	}
+	if w <= 0 || h <= 0 {
+		return nil, &Error{Op: op, Err: fmt.Errorf("invalid size %dx%d", w, h)}
+	}
+	if err := r.checkTextureSize(op, w, h); err != nil {
+		return nil, err
+	}
+	return r.createTexture(nil, w, h, filter, opts)
+}
+
+// createTexture runs allocateTexture on the executor. A nil pixels leaves the
+// texture unwritten.
+func (r *Renderer) createTexture(pixels []byte, w, h int, filter gputypes.FilterMode, opts TextureOptions) (*Texture, error) {
+	var (
+		result *Texture
+		err    error
+	)
 	if runErr := r.exec.run(context.Background(), func() {
 		if r.device == nil {
 			err = ErrClosed
 			return
 		}
-		result, err = r.uploadTexture(pixels, w, h, filter)
+		result, err = r.allocateTexture(pixels, w, h, filter, opts)
 	}); runErr != nil {
 		return nil, runErr
 	}
@@ -89,7 +164,7 @@ func packPixels(src image.Image) []byte {
 	return packed.Pix
 }
 
-func (r *Renderer) uploadTexture(pixels []byte, w, h int, filter gputypes.FilterMode) (_ *Texture, err error) {
+func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.FilterMode, opts TextureOptions) (_ *Texture, err error) {
 	if r.sampledLayout == nil {
 		r.sampledLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 			Label: r.label + ":sampled-image",
@@ -102,20 +177,25 @@ func (r *Renderer) uploadTexture(pixels []byte, w, h int, filter gputypes.Filter
 			return nil, &Error{Op: "create sampled image layout", Err: err}
 		}
 	}
-	t := &Texture{r: r, width: w, height: h}
+	t := &Texture{r: r, width: w, height: h, renderTarget: opts.RenderTarget}
 	defer func() {
 		if err != nil {
 			t.release()
 		}
 	}()
+	size := wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1}
+	usage := gputypes.TextureUsageTextureBinding | gputypes.TextureUsageCopyDst | gputypes.TextureUsageCopySrc
+	if opts.RenderTarget {
+		usage |= gputypes.TextureUsageRenderAttachment
+	}
 	t.texture, err = r.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:         r.label + ":sampled-image",
-		Size:          wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1},
+		Size:          size,
 		MipLevelCount: 1,
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
 		Format:        gputypes.TextureFormatRGBA8Unorm,
-		Usage:         gputypes.TextureUsageTextureBinding | gputypes.TextureUsageCopyDst | gputypes.TextureUsageCopySrc,
+		Usage:         usage,
 	})
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture", Err: err}
@@ -123,6 +203,24 @@ func (r *Renderer) uploadTexture(pixels []byte, w, h int, filter gputypes.Filter
 	t.view, err = r.device.CreateTextureView(t.texture, nil)
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture view", Err: err}
+	}
+	if opts.Depth {
+		t.depthTex, err = r.device.CreateTexture(&wgpu.TextureDescriptor{
+			Label:         r.label + ":sampled-image-depth",
+			Size:          size,
+			MipLevelCount: 1,
+			SampleCount:   1,
+			Dimension:     gputypes.TextureDimension2D,
+			Format:        gputypes.TextureFormatDepth24Plus,
+			Usage:         gputypes.TextureUsageRenderAttachment,
+		})
+		if err != nil {
+			return nil, &Error{Op: "create sampled texture depth", Err: err}
+		}
+		t.depthView, err = r.device.CreateTextureView(t.depthTex, nil)
+		if err != nil {
+			return nil, &Error{Op: "create sampled texture depth view", Err: err}
+		}
 	}
 	t.sampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
 		Label: r.label + ":linear-sampler", AddressModeU: gputypes.AddressModeClampToEdge, AddressModeV: gputypes.AddressModeClampToEdge,
@@ -138,8 +236,10 @@ func (r *Renderer) uploadTexture(pixels []byte, w, h int, filter gputypes.Filter
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture group", Err: err}
 	}
-	if err = t.write(pixels); err != nil {
-		return nil, err
+	if pixels != nil {
+		if err = t.write(pixels); err != nil {
+			return nil, err
+		}
 	}
 	if r.textures == nil {
 		r.textures = make(map[*Texture]struct{})
@@ -156,6 +256,7 @@ func (t *Texture) write(pixels []byte) error {
 	); err != nil {
 		return &Error{Op: "write sampled texture", Err: err}
 	}
+	t.written = true
 	return nil
 }
 
@@ -223,6 +324,9 @@ func (t *Texture) ReadPixels(ctx context.Context) (*image.NRGBA, error) {
 
 func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 	r := t.r
+	if !t.written {
+		return nil, &Error{Op: "read texture", Err: errors.New("nothing has been written to or drawn into the texture")}
+	}
 	if err := r.checkReadbackSize("read texture", t.width, t.height); err != nil {
 		return nil, err
 	}
@@ -238,6 +342,9 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 	enc, err := r.device.CreateCommandEncoder(&wgpu.CommandEncoderDescriptor{Label: r.label + ":texture-readback"})
 	if err != nil {
 		return nil, &Error{Op: "create encoder", Err: err}
+	}
+	if t.drawn {
+		return t.readPixelsByBlit(ctx, enc, staging, stride)
 	}
 	// A sampled texture rests in the TextureBinding state: gogpu leaves it
 	// there after every write and does not track sampling. The copy needs
@@ -255,6 +362,131 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 	}
 	r.device.FreeCommandBuffer(cmd)
 	return img, nil
+}
+
+// readPixelsByBlit reads back a texture that has been drawn into. Once a
+// texture has been a render attachment, gogpu's usage tracker records that
+// usage and, before any later submission that copies from the texture,
+// records its own barrier from the attachment layout. On Vulkan the texture
+// is in the sampled layout by then, so that barrier and every one after it
+// name the wrong state, and nothing recorded in the command buffer runs
+// before it. Sampling is not tracked, so the texture is instead drawn into
+// a scratch target that has no TextureBinding usage, and the scratch target
+// is copied out exactly as the main target is. The scratch target is new,
+// so its first pass starts from the undefined layout. Rendering a same-size
+// quad samples every texel at its centre, which reproduces the bytes.
+func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder, staging *wgpu.Buffer, stride int) (_ *image.NRGBA, err error) {
+	r := t.r
+	blit, err := r.blitPipeline()
+	if err != nil {
+		enc.DiscardEncoding()
+		return nil, err
+	}
+	scratch, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
+		Label:         r.label + ":texture-readback-scratch",
+		Size:          wgpu.Extent3D{Width: uint32(t.width), Height: uint32(t.height), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     gputypes.TextureDimension2D,
+		Format:        gputypes.TextureFormatRGBA8Unorm,
+		Usage:         gputypes.TextureUsageRenderAttachment | gputypes.TextureUsageCopySrc,
+	})
+	if err != nil {
+		enc.DiscardEncoding()
+		return nil, &Error{Op: "create texture readback scratch", Err: err}
+	}
+	defer scratch.Release()
+	view, err := r.device.CreateTextureView(scratch, nil)
+	if err != nil {
+		enc.DiscardEncoding()
+		return nil, &Error{Op: "create texture readback scratch view", Err: err}
+	}
+	defer view.Release()
+	pass, err := enc.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		Label:            r.label + ":texture-readback-blit",
+		ColorAttachments: []wgpu.RenderPassColorAttachment{{View: view, LoadOp: gputypes.LoadOpClear, StoreOp: gputypes.StoreOpStore}},
+	})
+	if err != nil {
+		enc.DiscardEncoding()
+		return nil, &Error{Op: "begin texture readback blit", Err: err}
+	}
+	pass.SetPipeline(blit)
+	pass.SetBindGroup(0, t.group, nil)
+	pass.Draw(gputypes.DrawArgs{VertexCount: 6, InstanceCount: 1})
+	if err := pass.End(); err != nil {
+		enc.DiscardEncoding()
+		return nil, &Error{Op: "end texture readback blit", Err: err}
+	}
+	transition(enc, scratch, gputypes.TextureUsageRenderAttachment, gputypes.TextureUsageCopySrc)
+	encodeReadback(enc, scratch, staging, t.width, t.height, stride)
+	cmd, err := r.submit(enc)
+	if err != nil {
+		return nil, err
+	}
+	img, _, _, err := mapImage(ctx, r.device, staging, t.width, t.height, stride)
+	if err != nil {
+		return nil, err
+	}
+	r.device.FreeCommandBuffer(cmd)
+	return img, nil
+}
+
+// blitShader copies a sampled texture over the whole target. Its UVs are
+// listed explicitly because naga v0.19.0 miscompiles the derived form for
+// Metal; see TestDerivedUVShader.
+const blitShader = `
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) i: u32) -> Out {
+	let p = array<vec2<f32>, 6>(
+		vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0), vec2<f32>(1.0, -1.0),
+		vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, -1.0));
+	let uv = array<vec2<f32>, 6>(
+		vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
+		vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0));
+	var o: Out;
+	o.pos = vec4<f32>(p[i], 0.0, 1.0);
+	o.uv = uv[i];
+	return o;
+}
+@fragment fn fs_main(o: Out) -> @location(0) vec4<f32> { return textureSample(tex, samp, o.uv); }`
+
+// blitPipeline returns the readback blit pipeline, creating it on first use.
+// It runs on the executor; the pipeline is released with the device.
+func (r *Renderer) blitPipeline() (*wgpu.RenderPipeline, error) {
+	if r.blit != nil {
+		return r.blit, nil
+	}
+	if r.sampledLayout == nil {
+		return nil, &Error{Op: "create readback blit", Err: errors.New("no sampled texture layout")}
+	}
+	// The layout and module stay alive with the pipeline: the Vulkan
+	// backend binds descriptor sets against the layout at draw time.
+	module, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{Label: r.label + ":readback-blit", WGSL: blitShader})
+	if err != nil {
+		return nil, &Error{Op: "create readback blit shader", Err: err}
+	}
+	layout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{Label: r.label + ":readback-blit", BindGroupLayouts: []*wgpu.BindGroupLayout{r.sampledLayout}})
+	if err != nil {
+		module.Release()
+		return nil, &Error{Op: "create readback blit layout", Err: err}
+	}
+	pipeline, err := r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Label:       r.label + ":readback-blit",
+		Layout:      layout,
+		Vertex:      wgpu.VertexState{Module: module, EntryPoint: "vs_main"},
+		Fragment:    &wgpu.FragmentState{Module: module, EntryPoint: "fs_main", Targets: []gputypes.ColorTargetState{{Format: gputypes.TextureFormatRGBA8Unorm, WriteMask: gputypes.ColorWriteMaskAll}}},
+		Primitive:   gputypes.PrimitiveState{Topology: gputypes.PrimitiveTopologyTriangleList, CullMode: gputypes.CullModeNone},
+		Multisample: gputypes.DefaultMultisampleState(),
+	})
+	if err != nil {
+		layout.Release()
+		module.Release()
+		return nil, &Error{Op: "create readback blit pipeline", Err: err}
+	}
+	r.blit, r.blitLayout, r.blitModule = pipeline, layout, module
+	return r.blit, nil
 }
 
 // Close releases this texture's GPU resources. It is safe to call more than
@@ -287,6 +519,12 @@ func (t *Texture) release() {
 	if t.texture != nil {
 		t.texture.Release()
 	}
-	t.group, t.sampler, t.view, t.texture = nil, nil, nil, nil
+	if t.depthView != nil {
+		t.depthView.Release()
+	}
+	if t.depthTex != nil {
+		t.depthTex.Release()
+	}
+	t.group, t.sampler, t.view, t.texture, t.depthView, t.depthTex = nil, nil, nil, nil, nil, nil
 	t.closed = true
 }

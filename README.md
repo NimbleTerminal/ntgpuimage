@@ -12,7 +12,7 @@ The library manages the render target, texture resources, GPU execution, and
 readback. Shaders, pipelines, buffers, and drawing use upstream WebGPU types
 directly.
 
-The current release is v0.1.0. The API may change before v1.0.
+The current release is v0.2.0. The API may change before v1.0.
 [DESIGN.md](DESIGN.md) explains the design and compares related GoGPU libraries.
 [VALIDATION.md](VALIDATION.md) records what was tested and how.
 
@@ -63,6 +63,7 @@ Run the examples:
 ```sh
 go run ./examples/clear -out frame.png      # clear a target and read it back
 go run ./examples/texture -out texture.png  # upload, sample, update, read back
+go run ./examples/twopass -out twopass.png  # render into a texture, then sample it
 ```
 
 ## API
@@ -77,6 +78,8 @@ go run ./examples/texture -out texture.png  # upload, sample, update, read back
 | `Renderer.Resize(w, h)`, `Size()` | Replace the target. A failed resize keeps the old one. |
 | `Renderer.AdapterInfo()` | Adapter name, backend, and device type. |
 | `Renderer.UploadTexture(image, TextureOptions)` | Create a sampled texture from a Go image. |
+| `Renderer.NewTexture(w, h, TextureOptions)` | Create a blank texture, typically a `RenderTarget`. |
+| `Frame.RenderTo(texture, draw)` | Draw into a `RenderTarget` texture within the current frame. |
 | `Texture.Update`, `ReadPixels`, `Size`, `Close` | Replace pixels in place, copy them back, release. |
 | `Texture.BindGroup()`, `BindGroupLayout()` | Handles for the caller's pipeline. |
 | `Renderer.Close()` | Release everything, including textures still open. |
@@ -117,6 +120,48 @@ pixels, err := tile.ReadPixels(ctx)  // optional CPU copy of the texture
 
 `TextureOptions{Filter: gputypes.FilterModeNearest}` selects nearest
 filtering. The zero value selects linear. UVs clamp at the edges.
+
+## Rendering into a texture
+
+A texture created with `RenderTarget: true` can be drawn into by one pass
+and sampled by a later pass, in the same frame or a later one, without a
+CPU readback in between. `Frame.RenderTo` hands the draw callback a `Frame`
+whose `Color`, `Depth`, `Width`, and `Height` describe the texture, so the
+same drawing code works against either target.
+
+```go
+scratch, err := r.NewTexture(512, 512, ntgpuimage.TextureOptions{RenderTarget: true, Depth: true})
+if err != nil { /* handle error */ }
+defer scratch.Close()
+
+img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
+	// Pass 1: draw into the texture. t.Color and t.Depth are its views.
+	if err := f.RenderTo(scratch, func(t *ntgpuimage.Frame) error {
+		return drawScene(t) // BeginRenderPass on t.Encoder with t.Color
+	}); err != nil {
+		return err
+	}
+	// Pass 2: sample scratch.BindGroup() while drawing into f.Color.
+	return drawPostProcess(f, scratch)
+})
+```
+
+- Attach the views of the nested `Frame`, not the outer one. The nested
+  `Frame` is cleared when its callback returns.
+- `RenderTo` records the layout transitions the pass needs on Vulkan, and
+  `ReadPixels` on a drawn texture goes through a GPU blit rather than a
+  direct copy, so both pass the Vulkan validation layer; see
+  [VALIDATION.md](./VALIDATION.md). Both are no-ops on Metal and in the
+  browser.
+- A render target has a fixed size. To change it, create a new texture and
+  close the old one. `Renderer.Resize` does not affect textures.
+- `Depth: true` allocates a `Depth24Plus` attachment for the texture and
+  requires `RenderTarget`. The nested `Frame.Depth` is nil otherwise.
+- `UploadTexture` also accepts `RenderTarget`, for drawing over an image.
+- `RenderTo` cannot be nested. An error from its callback fails the frame
+  even if the outer callback ignores it. Sampling a texture that has never
+  been written or drawn reads undefined pixels, and `ReadPixels` on it
+  returns an error.
 
 ## Threading and ownership
 
@@ -260,12 +305,16 @@ Raw output, including throughput and allocations:
   of an indexed `let` or `const` array, such as `positions[i].x * 0.5`.
   List the values explicitly, as the examples do. `TestDerivedUVShader`
   reports when upstream fixes this.
-- The color target cannot be sampled by a later pass. It has no
-  `TextureBinding` usage.
+- The main color target cannot be sampled by a later pass. It has no
+  `TextureBinding` usage. Draw into a `RenderTarget` texture with
+  `Frame.RenderTo` instead.
+- Render-target textures have no resize; create a new one.
 - No mipmaps, MSAA, sRGB formats, or partial texture updates.
 - Metal, Vulkan on one NVIDIA adapter, and Chrome were run. DX12, GLES, and
   other browsers compile but were not tested.
-- `ReadPixels` fails until a frame has been drawn to the current target.
+- `ReadPixels` fails until a frame has been drawn to the current target,
+  and `Texture.ReadPixels` fails until the texture has been written or
+  drawn into.
 
 
 ## Open Collaboration

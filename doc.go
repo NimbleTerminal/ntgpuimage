@@ -24,6 +24,16 @@
 // stable thread. Code that receives the device must not retain it for use
 // on other goroutines.
 //
+// # Render targets
+//
+// A Texture created with TextureOptions.RenderTarget can be drawn into with
+// Frame.RenderTo and sampled by later passes in the same frame or in later
+// frames, with no readback in between. RenderTo records the layout
+// transitions Vulkan needs around the pass, and ReadPixels on a drawn
+// texture reads it back through a GPU blit, because gogpu's usage tracker
+// cannot be told about sampling; see VALIDATION.md. Render targets have a
+// fixed size and are released by Close like other textures.
+//
 // # Browser
 //
 // On GOOS=js the map step awaits a JavaScript promise, which is fine from

@@ -2,6 +2,7 @@ package ntgpuimage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"sync/atomic"
@@ -38,7 +39,73 @@ type Frame struct {
 	Width   int
 	Height  int
 	Seq     uint64 // frame sequence number, starting at 1
+
+	r      *Renderer
+	nested bool  // set on the Frame handed to a RenderTo callback
+	err    error // a RenderTo failure the draw callback did not return
 }
+
+// RenderTo runs draw against t instead of the main target. The Frame passed
+// to draw shares this frame's Device, Encoder and Seq, and its Color, Depth,
+// Width and Height describe t. Passes recorded in draw run before passes
+// recorded afterwards, so the rest of this frame, and any later frame, can
+// sample t. t must have been created with TextureOptions.RenderTarget.
+//
+// RenderTo cannot be nested, and the nested Frame is cleared when draw
+// returns. An error from draw fails the whole frame even if the caller does
+// not return it, because the texture pass may be half recorded. Errors
+// reported before draw runs leave the frame usable.
+func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
+	const op = "render to texture"
+	if f.nested {
+		return &Error{Op: op, Err: errors.New("RenderTo cannot be nested")}
+	}
+	if t == nil {
+		return &Error{Op: op, Err: errors.New("nil texture")}
+	}
+	if t.r != f.r {
+		return &Error{Op: op, Err: errors.New("texture belongs to another renderer")}
+	}
+	if t.closed || t.texture == nil {
+		return ErrClosed
+	}
+	if !t.renderTarget {
+		return &Error{Op: op, Err: errors.New("texture was not created with RenderTarget")}
+	}
+	// On Vulkan a pass leaves an attachment that also has TextureBinding
+	// usage in the GENERAL layout, and a pass with LoadOp Load expects to
+	// find it there, while sampling needs SHADER_READ_ONLY. gogpu's usage
+	// tracker records only the attachment usage, so it never moves the
+	// texture itself. A written texture rests in SHADER_READ_ONLY and is
+	// moved to GENERAL before the pass; a new one starts undefined and the
+	// pass handles that. Both are no-ops on Metal and in the browser.
+	if t.written {
+		transition(f.Encoder, t.texture, gputypes.TextureUsageTextureBinding, generalLayout)
+	}
+	sub := &Frame{Device: f.Device, Encoder: f.Encoder, Color: t.view, Depth: t.depthView, Width: t.width, Height: t.height, Seq: f.Seq, r: f.r, nested: true}
+	err := draw(sub)
+	*sub = Frame{}
+	if err != nil {
+		// The pass may be half recorded, so the frame cannot be submitted
+		// even if the caller ignores this error.
+		err = &Error{Op: op, Err: err}
+		if f.err == nil {
+			f.err = err
+		}
+		return err
+	}
+	transition(f.Encoder, t.texture, generalLayout, gputypes.TextureUsageTextureBinding)
+	t.written, t.drawn = true, true
+	return nil
+}
+
+// generalLayout names the Vulkan GENERAL image layout in a barrier. gogpu
+// derives the layout from a usage, and StorageBinding is the only usage it
+// maps to GENERAL; TextureBinding is added so the access and stage masks
+// also cover fragment sampling. The texture need not have been created
+// with either usage: the backend uses the mask only to pick layouts and
+// masks, and Metal and the browser ignore barriers altogether.
+const generalLayout = gputypes.TextureUsageStorageBinding | gputypes.TextureUsageTextureBinding
 
 // Stats reports where one Render spent its time.
 type Stats struct {
@@ -69,6 +136,9 @@ type Renderer struct {
 
 	target        target
 	sampledLayout *wgpu.BindGroupLayout
+	blit          *wgpu.RenderPipeline // readback of drawn textures, created on first use
+	blitLayout    *wgpu.PipelineLayout
+	blitModule    *wgpu.ShaderModule
 	textures      map[*Texture]struct{}
 
 	seq    uint64
@@ -269,6 +339,12 @@ func (r *Renderer) releaseAll() {
 		t.release()
 	}
 	clear(r.textures)
+	if r.blit != nil {
+		r.blit.Release()
+		r.blitLayout.Release()
+		r.blitModule.Release()
+		r.blit, r.blitLayout, r.blitModule = nil, nil, nil
+	}
 	if r.sampledLayout != nil {
 		r.sampledLayout.Release()
 		r.sampledLayout = nil
@@ -445,10 +521,19 @@ func (r *Renderer) render(ctx context.Context, draw func(*Frame) error, readback
 	drawAndCopy := draw != nil && readback
 	if drawAndCopy && t.drawn {
 		transition(enc, t.color, gputypes.TextureUsageCopySrc, gputypes.TextureUsageRenderAttachment)
+	} else if drawAndCopy {
+		// A new target is undefined. Moving it to the attachment layout
+		// here keeps the transition after the draw correct even when the
+		// draw only renders into textures and never attaches the target.
+		transition(enc, t.color, 0, gputypes.TextureUsageRenderAttachment)
 	}
 	if draw != nil {
-		frame := &Frame{Device: r.device, Encoder: enc, Color: t.colorView, Depth: t.depthView, Width: t.width, Height: t.height, Seq: r.seq}
-		if err := draw(frame); err != nil {
+		frame := &Frame{Device: r.device, Encoder: enc, Color: t.colorView, Depth: t.depthView, Width: t.width, Height: t.height, Seq: r.seq, r: r}
+		err := draw(frame)
+		if err == nil {
+			err = frame.err
+		}
+		if err != nil {
 			// Abandon the encoder explicitly. A dropped encoder keeps its Metal
 			// command buffer uncommitted. Metal's queue allows 64 of those by
 			// default, and the next CreateCommandEncoder then blocks forever,

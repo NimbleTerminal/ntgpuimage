@@ -1,6 +1,6 @@
 # Design
 
-ntgpuimage manages offscreen render targets, image textures, GPU execution,
+`ntgpuimage` manages offscreen render targets, image textures, GPU execution,
 and pixel readback. Callers use WebGPU types directly for shaders,
 pipelines, buffers, and drawing.
 
@@ -105,7 +105,7 @@ pixmap, and pass it to `UploadTexture` or `Texture.Update`.
 | `Queue.WriteTexture` | Used. Its internal row padding lets uploads pass a tight stride. |
 | `Buffer.MapAsync`, `MapPending.Wait`, `Buffer.Unmap` | Used for readback. After cancellation, the library unmaps and replaces the buffer to avoid an upstream bug described below. |
 | `Device.Poll(PollPoll)`, `MapPending.Status` | Used natively with cancellable contexts, because `Poll(PollWait)` cannot be interrupted. |
-| `CommandEncoder.TransitionTextures` | Used around a draw that is followed by a readback in the same encoder, and around a copy from a sampled texture. Ran: without the first, `Finish` fails with a usage conflict. It is a no-op on Metal and in the browser. A draw alone or a readback alone declares nothing, because gogpu moves the texture from the previous submission's usage at submit. Checked on Vulkan under the validation layer. |
+| `CommandEncoder.TransitionTextures` | Used around a draw that is followed by a readback in the same encoder, around a copy from a sampled texture, and around a `Frame.RenderTo` pass. On Vulkan a render pass leaves an attachment that also has `TextureBinding` usage in `GENERAL` ([command.go#L1602-L1607](https://github.com/gogpu/wgpu/blob/v0.34.5/hal/vulkan/command.go#L1602-L1607)) while sampler descriptors name `SHADER_READ_ONLY_OPTIMAL` ([device.go#L1121](https://github.com/gogpu/wgpu/blob/v0.34.5/hal/vulkan/device.go#L1121)), so `RenderTo` moves the texture to `GENERAL` before the pass and to the sampled layout after it. The only usage gogpu maps to `GENERAL` is `StorageBinding`, which the barrier names for that reason. Explicit transitions do not update the usage scope unless a copy follows ([encoder_native.go#L262-L290](https://github.com/gogpu/wgpu/blob/v0.34.5/encoder_native.go#L262-L290)), so a drawn texture is read back by blitting it into a scratch target rather than copying from it. Checked on Vulkan under the validation layer. Ran: without the first, `Finish` fails with a usage conflict. It is a no-op on Metal and in the browser. A draw alone or a readback alone declares nothing, because gogpu moves the texture from the previous submission's usage at submit. Checked on Vulkan under the validation layer. |
 | `CommandEncoder.DiscardEncoding` | Used on a failed draw callback. |
 | `Device.Limits` | Used to reject oversized targets before creation. |
 | `Device.FreeCommandBuffer` | Called after the GPU has finished. `Submit` now recycles encoders itself, so the call looks redundant on Metal, Vulkan, GLES, and software. DX12 was not verified, so it stays. After a cancelled or failed wait it is skipped, since the GPU may still be using the buffer. |
@@ -125,6 +125,7 @@ The library provides:
 - Pixel readback with row alignment and cancellation.
 - Image upload, sampling, updates, and texture readback.
 - `RenderToTexture` and `ReadPixels` for reading only selected frames.
+- `NewTexture` with `RenderTarget`, and `Frame.RenderTo` for drawing into a texture that later passes sample.
 - Adapter information and errors that callers can inspect.
 
 It does not provide a scene engine, chart types, SVG parsing, an atlas

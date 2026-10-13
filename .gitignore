@@ -6,5 +6,7 @@ bin/
 /frame.png
 /texture.png
 /texture-updated.png
+/twopass.png
+/twopass-texture.png
 *.wasm
 *.test

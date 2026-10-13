@@ -63,6 +63,37 @@ The script uses an installed validation layer. If none is available, it
 unpacks the `vulkan-validationlayers` package under `~/.cache/ntgpuimage`
 on the test machine without installing it system-wide.
 
+### Render-target textures
+
+Run on 2026-10-13 on the Vulkan system above with the same wgpu, naga and
+validation layer: `task test-vulkan-remote`, 51 tests, 0 validation
+errors, after these findings in wgpu v0.34.5:
+
+- A render pass leaves an attachment that also has `TextureBinding` usage
+  in `GENERAL` (`hal/vulkan/command.go`, `offscreenFinalLayout`), while
+  sampler descriptors are written as `SHADER_READ_ONLY_OPTIMAL`. Sampling
+  straight after the pass reported `VUID-VkDescriptorImageInfo-imageLayout-00344`.
+  `Frame.RenderTo` now moves the texture to the sampled layout after the
+  pass, and back to `GENERAL` before the next one, which a pass with
+  `LoadOp` `Load` expects. The barrier names `StorageBinding`, the only
+  usage gogpu maps to `GENERAL`.
+- The usage tracker records the attachment usage and, before any later
+  submission that copies from the texture, records its own transition from
+  `COLOR_ATTACHMENT_OPTIMAL`. Nothing in the command buffer runs before it,
+  so a direct copy from a drawn texture reported `VUID-vkCmdDraw-None-09600`
+  on every readback and on the next pass. `Texture.ReadPixels` on a drawn
+  texture now samples it into a scratch target without `TextureBinding`
+  usage and copies from that, following the main target's pattern.
+- A `Render` frame whose draw callback never attaches the main target left
+  it undefined before the transition that precedes the readback copy. The
+  target is now moved to the attachment layout before the first draw.
+- A pipeline layout released right after pipeline creation is still used
+  by `vkCmdBindDescriptorSets` on Vulkan. Metal did not object.
+
+The three examples, including `examples/twopass`, also ran on the same
+system under the layer with 0 validation errors.
+
+## Cancellation
 ## Cancellation
 
 Tests cover calls that expire while queued and contexts cancelled during

@@ -148,6 +148,7 @@ tasks:
     deps:
       - build-ex-clear
       - build-ex-texture
+      - build-ex-twopass
 
   build-ex-clear:
     desc: 'Build the clear example'
@@ -171,11 +172,23 @@ tasks:
     generates:
       - bin/ntgpuimage-texture
 
+  build-ex-twopass:
+    desc: 'Build the two-pass example'
+    cmds:
+      - go build -o bin/ntgpuimage-twopass ./examples/twopass
+    sources:
+      - '*.go'
+      - examples/twopass/*.go
+      - go.mod
+    generates:
+      - bin/ntgpuimage-twopass
+
   run-examples:
     desc: 'Run all examples on the GPU, writing PNG files to bin/'
     cmds:
       - task: run-ex-clear
       - task: run-ex-texture
+      - task: run-ex-twopass
 
   run-ex-clear:
     desc: 'Render a cleared target to bin/clear.png'
@@ -190,3 +203,10 @@ tasks:
       - build-ex-texture
     cmds:
       - bin/ntgpuimage-texture -out bin/texture.png -updated bin/texture-updated.png
+
+  run-ex-twopass:
+    desc: 'Render a pattern into a texture and sample it, writing bin/twopass.png and bin/twopass-texture.png'
+    deps:
+      - build-ex-twopass
+    cmds:
+      - bin/ntgpuimage-twopass -out bin/twopass.png -texture bin/twopass-texture.png
