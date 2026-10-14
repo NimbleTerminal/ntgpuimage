@@ -93,7 +93,53 @@ errors, after these findings in wgpu v0.34.5:
 The three examples, including `examples/twopass`, also ran on the same
 system under the layer with 0 validation errors.
 
-## Cancellation
+### sRGB and Float16 textures
+
+Run on 2026-10-14 on the systems above, with the same wgpu and naga:
+`task test-gpu` on Metal, 54 pass and 1 skip (`TestDerivedUVShader`);
+`task test-browser`, 56 pass; `task test-vulkan-remote`, 55 pass and 0
+validation errors; `task ci` passes.
+
+- `TestSRGBTextureFiltersInLinearLight` samples halfway between a black and
+  a white texel. An `SRGB` texture gives 0.5 linear, re-encoded 188; a plain
+  one gives encoded 0.5, 128.
+- `TestSRGBTextureRoundTrip` reads all 256 byte values back unchanged after
+  an upload, after `Update`, and after a pass has drawn into the texture,
+  with and without depth, which covers both the copy and the blit path.
+- `TestRenderIntoSRGBTarget` writes linear 0.5, and separately blends white
+  at half alpha over black. Both read back 188 from an `SRGB` target and
+  128 from a plain one.
+- `TestFloat16RenderTarget` keeps a value of 2.0 through `textureLoad` and
+  clamps it on readback.
+
+When the readback blit for an `SRGB` texture wrote to an `RGBA8Unorm`
+scratch target, the round trip returned decoded values, for example 26 for
+a stored 90. The blit now writes to an sRGB scratch target, which encodes
+the texels again.
+
+Two upstream problems showed up on Vulkan. Neither comes from the new
+formats:
+
+- The first version of `TestSRGBTextureRoundTrip` shared one renderer
+  across its cases and reported `VUID-vkCmdDraw-None-09600`: a submission
+  expected a texture in `TRANSFER_SRC_OPTIMAL` while it was still
+  `UNDEFINED`. `Texture.Release` frees the texture's tracker index
+  ([texture_native.go#L67-L75](https://github.com/gogpu/wgpu/blob/v0.34.5/texture_native.go#L67-L75)),
+  but nothing calls `DeviceTracker.RemoveTexture`
+  ([device_tracker.go#L106-L110](https://github.com/gogpu/wgpu/blob/v0.34.5/core/device_tracker.go#L106-L110)),
+  so the next texture given that index inherits the last usage of the
+  closed one. Its first submission then starts with a barrier from that
+  usage. The same error reproduces with plain `RGBA8Unorm` textures and the
+  v0.2.0 API: read one back by copy, close it, then create, update and draw
+  into another. It disappears when the closed texture was never copied
+  from. The test now gives each case its own renderer; the library does not
+  yet work around the defect.
+- `New` fails about one run in ten, in a different test each time, with
+  `create staging buffer: ... vkMapMemory returned null pointer (BUG-VK-001)`
+  ([device.go#L421](https://github.com/gogpu/wgpu/blob/v0.34.5/hal/vulkan/device.go#L421)).
+  Unmodified v0.2.0 fails the same way, once in ten runs. The 55-pass run
+  above is one without it.
+
 ## Cancellation
 
 Tests cover calls that expire while queued and contexts cancelled during
