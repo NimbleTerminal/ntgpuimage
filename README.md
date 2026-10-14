@@ -80,7 +80,7 @@ go run ./examples/twopass -out twopass.png  # render into a texture, then sample
 | `Renderer.UploadTexture(image, TextureOptions)` | Create a sampled texture from a Go image. |
 | `Renderer.NewTexture(w, h, TextureOptions)` | Create a blank texture, typically a `RenderTarget`. |
 | `Frame.RenderTo(texture, draw)` | Draw into a `RenderTarget` texture within the current frame. |
-| `Texture.Update`, `ReadPixels`, `Size`, `Close` | Replace pixels in place, copy them back, release. |
+| `Texture.Update`, `ReadPixels`, `Size`, `Format`, `Close` | Replace pixels in place, copy them back, report the storage format, release. |
 | `Texture.BindGroup()`, `BindGroupLayout()` | Handles for the caller's pipeline. |
 | `Renderer.Close()` | Release everything, including textures still open. |
 
@@ -90,8 +90,10 @@ go run ./examples/twopass -out twopass.png  # render into a texture, then sample
 
 ## Pixels and alpha
 
-- Targets and textures are `RGBA8Unorm`. Colors are not converted between
-  color spaces.
+- The main target and default textures are `RGBA8Unorm`. Colors are not
+  converted between color spaces. `TextureOptions.SRGB` and
+  `TextureOptions.Float16` select other texture formats; see
+  [Texture formats](#texture-formats).
 - Readback returns the target's bytes as `image.NRGBA`. If a shader writes
   premultiplied color, un-premultiply before treating the image as straight
   alpha. Opaque output needs no conversion.
@@ -120,6 +122,30 @@ pixels, err := tile.ReadPixels(ctx)  // optional CPU copy of the texture
 
 `TextureOptions{Filter: gputypes.FilterModeNearest}` selects nearest
 filtering. The zero value selects linear. UVs clamp at the edges.
+
+## Texture formats
+
+| Option | Format | Shaders see | Upload, `Update`, `ReadPixels` |
+| --- | --- | --- | --- |
+| (default) | `RGBA8Unorm` | the stored values | the stored bytes |
+| `SRGB: true` | `RGBA8UnormSrgb` | linear values, decoded before filtering | the stored, sRGB-encoded bytes |
+| `Float16: true` | `RGBA16Float` | the stored values, including outside [0, 1] | upload and update rejected; readback clamped to 8 bits |
+
+`SRGB` suits ordinary images that a renderer lights or blends in linear
+light. Sampling decodes each texel before the sampler filters, so a
+black/white edge filtered halfway gives 0.5 linear (encoded 188) rather than
+encoded 0.5 (about 21% light). Remove any decode the shader did after
+sampling. The bytes you upload and read back do not change.
+
+Drawn into with `RenderTarget`, an `SRGB` texture encodes what the fragment
+shader writes and blends in linear light, so shaders output linear color.
+Pipelines that draw into a texture name `texture.Format()` as their color
+target format. Alpha is never encoded.
+
+`Float16` requires `RenderTarget` and suits a linear scene that is later
+resolved or tone mapped into an 8-bit target. Read it in a later pass
+through `BindGroup()` with `textureSample` or `textureLoad`. `Depth: true`
+works with every format. `SRGB` and `Float16` are exclusive.
 
 ## Rendering into a texture
 
@@ -309,7 +335,12 @@ Raw output, including throughput and allocations:
   `TextureBinding` usage. Draw into a `RenderTarget` texture with
   `Frame.RenderTo` instead.
 - Render-target textures have no resize; create a new one.
-- No mipmaps, MSAA, sRGB formats, or partial texture updates.
+- No mipmaps, MSAA, or partial texture updates. The main target is always
+  `RGBA8Unorm`.
+- On desktop OpenGL, gogpu does not enable `GL_FRAMEBUFFER_SRGB`, so drawing
+  into an `SRGB` texture there probably stores linear values unencoded.
+  Sampling decodes as elsewhere. This follows from reading gogpu's source
+  and has not been tested.
 - Metal, Vulkan on one NVIDIA adapter, and Chrome were run. DX12, GLES, and
   other browsers compile but were not tested.
 - `ReadPixels` fails until a frame has been drawn to the current target,

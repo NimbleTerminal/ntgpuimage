@@ -4,10 +4,16 @@
 //
 // # Pixels
 //
-// Targets and textures are RGBA8Unorm without color-space conversion.
-// Readback returns the target's bytes as image.NRGBA, so a shader that
-// writes premultiplied color must be un-premultiplied by the caller.
-// Uploads store straight (non-premultiplied) alpha.
+// The main target and default textures are RGBA8Unorm without color-space
+// conversion. Readback returns the target's bytes as image.NRGBA, so a
+// shader that writes premultiplied color must be un-premultiplied by the
+// caller. Uploads store straight (non-premultiplied) alpha.
+//
+// TextureOptions.SRGB stores a texture as RGBA8UnormSrgb. It exchanges the
+// same sRGB-encoded bytes with Go, but shaders sample linear values that
+// were decoded before filtering, and drawing into it encodes linear output
+// and blends in linear light. TextureOptions.Float16 stores a render target
+// as RGBA16Float.
 //
 // # Threading
 //

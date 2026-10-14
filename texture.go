@@ -11,12 +11,14 @@ import (
 	"github.com/gogpu/wgpu"
 )
 
-// Texture is an RGBA8 image owned by a Renderer. It can be sampled in a draw
+// Texture is an image owned by a Renderer, stored as RGBA8Unorm unless
+// TextureOptions selects another format. It can be sampled in a draw
 // callback, updated without reallocating, or copied back to Go pixels.
 // Binding 0 is texture_2d<f32>; binding 1 is a filtering sampler. UVs clamp
 // at the edges.
 type Texture struct {
 	r             *Renderer
+	format        gputypes.TextureFormat
 	texture       *wgpu.Texture
 	view          *wgpu.TextureView
 	sampler       *wgpu.Sampler
@@ -50,13 +52,46 @@ type TextureOptions struct {
 	// Depth allocates a Depth24Plus attachment alongside the color texture,
 	// exposed as Frame.Depth inside Frame.RenderTo. It requires RenderTarget.
 	Depth bool
+	// SRGB stores the texture as RGBA8UnormSrgb. Its bytes are still
+	// sRGB-encoded: UploadTexture, Update and ReadPixels exchange the same
+	// bytes as for a plain texture. Only shaders see a difference. Sampling
+	// decodes each texel to linear light before filtering, so shaders
+	// receive linear values. A RenderTarget encodes what fragment shaders
+	// write and blends in linear light, so shaders output linear color,
+	// and pipelines that draw into it target TextureFormatRGBA8UnormSrgb.
+	// Alpha is never encoded.
+	SRGB bool
+	// Float16 stores the texture as RGBA16Float, for linear-light or other
+	// intermediate results that need more than 8 bits or values outside
+	// [0, 1]. It requires RenderTarget, excludes SRGB, and is written only by
+	// Frame.RenderTo: UploadTexture and Update reject it. ReadPixels clamps
+	// it to [0, 1] and rounds to 8 bits. Shaders can read it with
+	// textureSample or textureLoad through BindGroup.
+	Float16 bool
 }
 
 func (o TextureOptions) validate(op string) error {
 	if o.Depth && !o.RenderTarget {
 		return &Error{Op: op, Err: errors.New("Depth requires RenderTarget")}
 	}
+	if o.Float16 && !o.RenderTarget {
+		return &Error{Op: op, Err: errors.New("Float16 requires RenderTarget")}
+	}
+	if o.Float16 && o.SRGB {
+		return &Error{Op: op, Err: errors.New("Float16 and SRGB are exclusive")}
+	}
 	return nil
+}
+
+// format returns the storage format that validated options select.
+func (o TextureOptions) format() gputypes.TextureFormat {
+	switch {
+	case o.SRGB:
+		return gputypes.TextureFormatRGBA8UnormSrgb
+	case o.Float16:
+		return gputypes.TextureFormatRGBA16Float
+	}
+	return gputypes.TextureFormatRGBA8Unorm
 }
 
 // filter returns the sampler filter to use, or an error for an unknown one.
@@ -82,6 +117,9 @@ func (r *Renderer) UploadTexture(src image.Image, opts TextureOptions) (*Texture
 	}
 	if err := opts.validate(op); err != nil {
 		return nil, err
+	}
+	if opts.Float16 {
+		return nil, &Error{Op: op, Err: errors.New("a Float16 texture cannot be uploaded; draw it with Frame.RenderTo")}
 	}
 	filter, err := opts.filter(op)
 	if err != nil {
@@ -177,7 +215,7 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 			return nil, &Error{Op: "create sampled image layout", Err: err}
 		}
 	}
-	t := &Texture{r: r, width: w, height: h, renderTarget: opts.RenderTarget}
+	t := &Texture{r: r, format: opts.format(), width: w, height: h, renderTarget: opts.RenderTarget}
 	defer func() {
 		if err != nil {
 			t.release()
@@ -194,7 +232,7 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 		MipLevelCount: 1,
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        gputypes.TextureFormatRGBA8Unorm,
+		Format:        t.format,
 		Usage:         usage,
 	})
 	if err != nil {
@@ -263,6 +301,12 @@ func (t *Texture) write(pixels []byte) error {
 // Size returns the immutable texture dimensions in pixels.
 func (t *Texture) Size() (int, int) { return t.width, t.height }
 
+// Format returns the immutable storage format: RGBA8Unorm by default,
+// RGBA8UnormSrgb with TextureOptions.SRGB, or RGBA16Float with
+// TextureOptions.Float16. A pipeline that draws into a RenderTarget names it
+// as its color target format.
+func (t *Texture) Format() gputypes.TextureFormat { return t.format }
+
 // BindGroupLayout is the layout to include in a caller's pipeline layout.
 // Use BindGroup at the matching group index inside Renderer.Render/Do.
 // These raw GPU handles are valid only while the Texture and Renderer are open.
@@ -274,6 +318,9 @@ func (t *Texture) BindGroup() *wgpu.BindGroup             { return t.group }
 func (t *Texture) Update(src image.Image) error {
 	if t.r.closed.Load() {
 		return ErrClosed
+	}
+	if t.format == gputypes.TextureFormatRGBA16Float {
+		return &Error{Op: "update texture", Err: errors.New("a Float16 texture cannot be updated; draw it with Frame.RenderTo")}
 	}
 	w, h, err := imageSize("update texture", src)
 	if err != nil {
@@ -295,9 +342,11 @@ func (t *Texture) Update(src image.Image) error {
 	return err
 }
 
-// ReadPixels returns a fresh, tightly packed NRGBA copy of this texture.
-// It synchronizes with pending GPU work; use it only when a CPU consumer needs
-// the pixels. Sampling this texture in a render pass does not require readback.
+// ReadPixels returns a fresh, tightly packed NRGBA copy of this texture: the
+// stored bytes, which for an SRGB texture are still sRGB-encoded. A Float16
+// texture is clamped to [0, 1] and rounded to 8 bits. It synchronizes with
+// pending GPU work; use it only when a CPU consumer needs the pixels.
+// Sampling this texture in a render pass does not require readback.
 func (t *Texture) ReadPixels(ctx context.Context) (*image.NRGBA, error) {
 	if t.r.closed.Load() {
 		return nil, ErrClosed
@@ -375,9 +424,20 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 // is copied out exactly as the main target is. The scratch target is new,
 // so its first pass starts from the undefined layout. Rendering a same-size
 // quad samples every texel at its centre, which reproduces the bytes.
+//
+// Sampling an SRGB texture decodes it, so its scratch target is also sRGB
+// and encodes the texels back on write. A view of the texture as
+// RGBA8Unorm would avoid the round trip, but gogpu v0.34.5 honours view
+// formats only on Vulkan: Metal never sets PixelFormatView and DX12
+// creates the texture with a fully typed format. A Float16 texture is
+// converted to RGBA8Unorm by the write.
 func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder, staging *wgpu.Buffer, stride int) (_ *image.NRGBA, err error) {
 	r := t.r
-	blit, err := r.blitPipeline()
+	format := gputypes.TextureFormatRGBA8Unorm
+	if t.format == gputypes.TextureFormatRGBA8UnormSrgb {
+		format = t.format
+	}
+	blit, err := r.blitPipeline(format)
 	if err != nil {
 		enc.DiscardEncoding()
 		return nil, err
@@ -388,7 +448,7 @@ func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder
 		MipLevelCount: 1,
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        gputypes.TextureFormatRGBA8Unorm,
+		Format:        format,
 		Usage:         gputypes.TextureUsageRenderAttachment | gputypes.TextureUsageCopySrc,
 	})
 	if err != nil {
@@ -452,41 +512,48 @@ struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 }
 @fragment fn fs_main(o: Out) -> @location(0) vec4<f32> { return textureSample(tex, samp, o.uv); }`
 
-// blitPipeline returns the readback blit pipeline, creating it on first use.
-// It runs on the executor; the pipeline is released with the device.
-func (r *Renderer) blitPipeline() (*wgpu.RenderPipeline, error) {
-	if r.blit != nil {
-		return r.blit, nil
+// blitPipeline returns the readback blit pipeline that writes format,
+// creating it on first use. It runs on the executor; the pipelines, their
+// layout and their module are released with the device.
+func (r *Renderer) blitPipeline(format gputypes.TextureFormat) (*wgpu.RenderPipeline, error) {
+	if p := r.blit[format]; p != nil {
+		return p, nil
 	}
 	if r.sampledLayout == nil {
 		return nil, &Error{Op: "create readback blit", Err: errors.New("no sampled texture layout")}
 	}
-	// The layout and module stay alive with the pipeline: the Vulkan
+	// The layout and module stay alive with the pipelines: the Vulkan
 	// backend binds descriptor sets against the layout at draw time.
-	module, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{Label: r.label + ":readback-blit", WGSL: blitShader})
-	if err != nil {
-		return nil, &Error{Op: "create readback blit shader", Err: err}
+	if r.blitModule == nil {
+		module, err := r.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{Label: r.label + ":readback-blit", WGSL: blitShader})
+		if err != nil {
+			return nil, &Error{Op: "create readback blit shader", Err: err}
+		}
+		r.blitModule = module
 	}
-	layout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{Label: r.label + ":readback-blit", BindGroupLayouts: []*wgpu.BindGroupLayout{r.sampledLayout}})
-	if err != nil {
-		module.Release()
-		return nil, &Error{Op: "create readback blit layout", Err: err}
+	if r.blitLayout == nil {
+		layout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{Label: r.label + ":readback-blit", BindGroupLayouts: []*wgpu.BindGroupLayout{r.sampledLayout}})
+		if err != nil {
+			return nil, &Error{Op: "create readback blit layout", Err: err}
+		}
+		r.blitLayout = layout
 	}
 	pipeline, err := r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:       r.label + ":readback-blit",
-		Layout:      layout,
-		Vertex:      wgpu.VertexState{Module: module, EntryPoint: "vs_main"},
-		Fragment:    &wgpu.FragmentState{Module: module, EntryPoint: "fs_main", Targets: []gputypes.ColorTargetState{{Format: gputypes.TextureFormatRGBA8Unorm, WriteMask: gputypes.ColorWriteMaskAll}}},
+		Layout:      r.blitLayout,
+		Vertex:      wgpu.VertexState{Module: r.blitModule, EntryPoint: "vs_main"},
+		Fragment:    &wgpu.FragmentState{Module: r.blitModule, EntryPoint: "fs_main", Targets: []gputypes.ColorTargetState{{Format: format, WriteMask: gputypes.ColorWriteMaskAll}}},
 		Primitive:   gputypes.PrimitiveState{Topology: gputypes.PrimitiveTopologyTriangleList, CullMode: gputypes.CullModeNone},
 		Multisample: gputypes.DefaultMultisampleState(),
 	})
 	if err != nil {
-		layout.Release()
-		module.Release()
 		return nil, &Error{Op: "create readback blit pipeline", Err: err}
 	}
-	r.blit, r.blitLayout, r.blitModule = pipeline, layout, module
-	return r.blit, nil
+	if r.blit == nil {
+		r.blit = make(map[gputypes.TextureFormat]*wgpu.RenderPipeline)
+	}
+	r.blit[format] = pipeline
+	return pipeline, nil
 }
 
 // Close releases this texture's GPU resources. It is safe to call more than

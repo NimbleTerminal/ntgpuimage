@@ -34,7 +34,7 @@ type Options struct {
 type Frame struct {
 	Device  *wgpu.Device // the renderer's device, for queue writes and resource updates
 	Encoder *wgpu.CommandEncoder
-	Color   *wgpu.TextureView // RGBA8Unorm, RenderAttachment|CopySrc
+	Color   *wgpu.TextureView // RGBA8Unorm, RenderAttachment|CopySrc; inside RenderTo, the texture's Format
 	Depth   *wgpu.TextureView // nil unless Options.Depth
 	Width   int
 	Height  int
@@ -136,7 +136,7 @@ type Renderer struct {
 
 	target        target
 	sampledLayout *wgpu.BindGroupLayout
-	blit          *wgpu.RenderPipeline // readback of drawn textures, created on first use
+	blit          map[gputypes.TextureFormat]*wgpu.RenderPipeline // readback of drawn textures by scratch format, created on first use
 	blitLayout    *wgpu.PipelineLayout
 	blitModule    *wgpu.ShaderModule
 	textures      map[*Texture]struct{}
@@ -339,11 +339,17 @@ func (r *Renderer) releaseAll() {
 		t.release()
 	}
 	clear(r.textures)
-	if r.blit != nil {
-		r.blit.Release()
+	for _, p := range r.blit {
+		p.Release()
+	}
+	clear(r.blit)
+	if r.blitLayout != nil {
 		r.blitLayout.Release()
+		r.blitLayout = nil
+	}
+	if r.blitModule != nil {
 		r.blitModule.Release()
-		r.blit, r.blitLayout, r.blitModule = nil, nil, nil
+		r.blitModule = nil
 	}
 	if r.sampledLayout != nil {
 		r.sampledLayout.Release()

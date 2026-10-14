@@ -1,5 +1,20 @@
 # Changelog
 
+## `0.3.0` — 2026-10-14
+
+- `TextureOptions.SRGB` stores a texture as `RGBA8UnormSrgb`. Uploads,
+  `Update` and `ReadPixels` exchange the same sRGB-encoded bytes as before.
+  Shaders sample linear values that were decoded before filtering. Drawing
+  into an `SRGB` render target encodes the shader's linear output and blends
+  in linear light. `ReadPixels` on a drawn `SRGB` texture blits through an
+  sRGB scratch target, so it returns the stored bytes.
+- `TextureOptions.Float16` makes an `RGBA16Float` render target, with or
+  without `Depth`, for a linear scene that a later pass resolves through
+  `BindGroup` with `textureSample` or `textureLoad`.
+- `Texture.Format` reports the storage format, for a pipeline that draws
+  into the texture.
+- Checked on Metal, in Chrome, and on Vulkan under the validation layer.
+
 ## `0.2.0` — 2026-10-13
 
 - Moved to `nimbleterminal.dev/ntgpuimage` (GitHub `NimbleTerminal/ntgpuimage`).

@@ -126,10 +126,11 @@ The library provides:
 - Image upload, sampling, updates, and texture readback.
 - `RenderToTexture` and `ReadPixels` for reading only selected frames.
 - `NewTexture` with `RenderTarget`, and `Frame.RenderTo` for drawing into a texture that later passes sample.
+- `RGBA8UnormSrgb` textures (`TextureOptions.SRGB`) for sampling, filtering, drawing and blending in linear light, and `RGBA16Float` render targets (`TextureOptions.Float16`).
 - Adapter information and errors that callers can inspect.
 
 It does not provide a scene engine, chart types, SVG parsing, an atlas
-manager, mipmaps, MSAA, sRGB formats, or wrappers around WebGPU types.
+manager, mipmaps, MSAA, arbitrary texture formats, or wrappers around WebGPU types.
 
 ## Accepting an externally owned device
 
@@ -189,6 +190,8 @@ These changes could simplify the library. They have not been submitted upstream.
 | wgpu | Omit stencil operations in the browser for formats with no stencil aspect, instead of relying on `StencilReadOnly`. | [convert_resources.go#L808-L815](https://github.com/gogpu/wgpu/blob/v0.34.5/internal/browser/convert_resources.go#L808-L815) |
 | wgpu | Track texture writes and sampling in the device tracker. `Queue.WriteTexture` leaves a texture in the shader-read layout without telling the tracker, and bind groups record no usage, so a later copy from that texture runs in the wrong Vulkan layout unless the caller declares the transition. Ran on Vulkan under the validation layer. | [pending_writes.go#L299-L338](https://github.com/gogpu/wgpu/blob/v0.34.5/pending_writes.go#L299-L338), [track/texture.go#L229-L266](https://github.com/gogpu/wgpu/blob/v0.34.5/core/track/texture.go#L229-L266) |
 | wgpu | Record both usages when a render pass and a copy share an encoder. The scope keeps only the last one, so the tracker moves the attachment to CopySrc before the pass, and a pass that loads the attachment finds the wrong Vulkan layout. Ran on Vulkan under the validation layer. | [encoder_native.go#L218-L222](https://github.com/gogpu/wgpu/blob/v0.34.5/encoder_native.go#L218-L222) |
+| wgpu | Honour `TextureDescriptor.ViewFormats` on Metal (set `MTLTextureUsagePixelFormatView`) and DX12 (create a typeless resource). Vulkan sets `MUTABLE_FORMAT`; the other two ignore the list. With it, a drawn `SRGB` texture could be read back through an `RGBA8Unorm` view instead of an sRGB decode and re-encode. | [metal/conv.go#L103-L121](https://github.com/gogpu/wgpu/blob/v0.34.5/hal/metal/conv.go#L103-L121), [dx12/device.go#L1288-L1296](https://github.com/gogpu/wgpu/blob/v0.34.5/hal/dx12/device.go#L1290-L1297) |
+| wgpu | Enable `GL_FRAMEBUFFER_SRGB` on desktop GL when an sRGB attachment is bound, so drawing into `RGBA8UnormSrgb` encodes as on other backends. | No reference found in `hal/gles` |
 | gogpu | Submit the frame encoder in `RenderToImage`, so custom passes are not dropped on hardware backends. | Ran on Metal |
 | gg | Move `internal/gpu` to the wgpu v0.34 struct-parameter API. | Build failure above |
 
