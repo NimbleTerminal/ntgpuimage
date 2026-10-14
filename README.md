@@ -80,7 +80,7 @@ go run ./examples/twopass -out twopass.png  # render into a texture, then sample
 | `Renderer.UploadTexture(image, TextureOptions)` | Create a sampled texture from a Go image. |
 | `Renderer.NewTexture(w, h, TextureOptions)` | Create a blank texture, typically a `RenderTarget`. |
 | `Frame.RenderTo(texture, draw)` | Draw into a `RenderTarget` texture within the current frame. |
-| `Texture.Update`, `ReadPixels`, `Size`, `Format`, `Close` | Replace pixels in place, copy them back, report the storage format, release. |
+| `Texture.Update`, `UpdateLevels`, `ReadPixels`, `Size`, `Format`, `MipLevelCount`, `Close` | Replace pixels in place, copy them back, report the storage format, release. |
 | `Texture.BindGroup()`, `BindGroupLayout()` | Handles for the caller's pipeline. |
 | `Renderer.Close()` | Release everything, including textures still open. |
 
@@ -121,7 +121,68 @@ pixels, err := tile.ReadPixels(ctx)  // optional CPU copy of the texture
 ```
 
 `TextureOptions{Filter: gputypes.FilterModeNearest}` selects nearest
-filtering. The zero value selects linear. UVs clamp at the edges.
+filtering. The zero value selects linear. UVs clamp at the edges unless
+`AddressModeU` or `AddressModeV` selects `gputypes.AddressModeRepeat` or
+`gputypes.AddressModeMirrorRepeat`. Each axis is configured independently.
+
+## Mipmaps and repeating textures
+
+`TextureOptions.Mipmaps` generates a full mip chain on upload and regenerates it
+on `Update`. Linear filtering blends between levels (trilinear filtering);
+nearest filtering chooses the nearest level. The zero value keeps one level.
+
+```go
+tex, err := r.UploadTexture(pixels, ntgpuimage.TextureOptions{
+    Mipmaps: true,
+    SRGB: true,
+    AddressModeU: gputypes.AddressModeRepeat,
+    AddressModeV: gputypes.AddressModeRepeat,
+})
+```
+
+Shaders must allow mip selection: `textureSampleLevel(..., 0.0)` and
+`textureLoad(..., 0)` always use the base level. Use `textureSample` in uniform
+control flow, or compute `dpdx(uv)` and `dpdy(uv)` before material-dependent
+branches and pass them to `textureSampleGrad`. Take derivatives of the unwrapped
+UVs and let the repeating sampler wrap them; wrapping UVs before taking
+derivatives introduces seams and incorrect LODs.
+
+For a chain shared with a CPU renderer, or alpha-test coverage adjusted by the
+caller, generate or provide levels explicitly:
+
+```go
+levels, err := ntgpuimage.MipChain(pixels, ntgpuimage.MipOptions{
+    SRGB: true,
+    AlphaWeighted: true,
+})
+// Each level is a mutable *image.NRGBA. Adjust alpha for the material's
+// cutout threshold here, if needed, and retain these same levels on the CPU.
+tex, err := r.UploadTextureLevels(levels, ntgpuimage.TextureOptions{
+    SRGB: true,
+    AddressModeU: gputypes.AddressModeRepeat,
+    AddressModeV: gputypes.AddressModeRepeat,
+})
+// Replace the whole chain later with tex.UpdateLevels(levels).
+```
+
+`UploadTextureLevels` includes level 0 and uploads the supplied bytes without
+resizing, gamma conversion, alpha rescaling, or automatic generation. Each next
+level halves each dimension, rounding down with a minimum of 1. Partial chains
+are allowed, and sampling clamps to the last supplied level. `UpdateLevels`
+requires the original count and dimensions. `ReadPixels` always returns level 0.
+
+The CPU generator uses an area-weighted box filter, including the edges of odd
+sizes and rectangular textures such as 384×256. With `SRGB`, RGB is averaged in linear light and encoded
+again; alpha stays linear. Without `SRGB`, channels stay in their numeric space.
+`MipAlphaWeighted` on automatic uploads, or `MipOptions.AlphaWeighted` on the CPU
+helper, weights RGB by alpha to avoid dark fringes in transparent color images.
+Leave it false for data maps. Neither mode preserves alpha-test coverage;
+nt3d can adjust the generated alpha before uploading explicit levels.
+
+Mipmaps currently apply to uploaded/updated 8-bit textures, including blank
+`NewTexture` images subsequently filled by `Update`. `RenderTarget` and `Float16`
+exclude `Mipmaps`. Procedural GPU mip generation needs additional backend work;
+in particular wgpu v0.34.5 does not shrink Vulkan mip-view framebuffer dimensions.
 
 ## Texture formats
 
@@ -335,7 +396,7 @@ Raw output, including throughput and allocations:
   `TextureBinding` usage. Draw into a `RenderTarget` texture with
   `Frame.RenderTo` instead.
 - Render-target textures have no resize; create a new one.
-- No mipmaps, MSAA, or partial texture updates. The main target is always
+- No render-target mipmaps, MSAA, or partial texture updates. The main target is always
   `RGBA8Unorm`.
 - On desktop OpenGL, gogpu does not enable `GL_FRAMEBUFFER_SRGB`, so drawing
   into an `SRGB` texture there probably stores linear values unencoded.

@@ -15,9 +15,12 @@ import (
 // TextureOptions selects another format. It can be sampled in a draw
 // callback, updated without reallocating, or copied back to Go pixels.
 // Binding 0 is texture_2d<f32>; binding 1 is a filtering sampler. UVs clamp
-// at the edges.
+// at the edges unless TextureOptions selects repeat or mirror addressing.
 type Texture struct {
 	r             *Renderer
+	mipLevels     int
+	mipOptions    MipOptions
+	autoMips      bool
 	format        gputypes.TextureFormat
 	texture       *wgpu.Texture
 	view          *wgpu.TextureView
@@ -45,6 +48,18 @@ type TextureOptions struct {
 	// Nearest filtering is useful for pixel art or an atlas without padded
 	// tiles.
 	Filter gputypes.FilterMode
+	// AddressModeU and AddressModeV select clamp, repeat, or mirror-repeat.
+	// Zero selects ClampToEdge on each axis independently.
+	AddressModeU gputypes.AddressMode
+	AddressModeV gputypes.AddressMode
+	// Mipmaps allocates the full mip chain for an uploaded or updated image.
+	// It currently excludes RenderTarget and Float16. UploadTexture and Update
+	// generate it on the CPU using MipChain. Linear Filter blends mip levels
+	// (trilinear filtering); nearest Filter selects the nearest level.
+	Mipmaps bool
+	// MipAlphaWeighted enables alpha-weighted RGB when generating mipmaps.
+	// It does not preserve alpha-test coverage; supply adjusted levels for cutouts.
+	MipAlphaWeighted bool
 	// RenderTarget also allows the texture to be drawn into with
 	// Frame.RenderTo. A render target keeps its fixed size: to change it,
 	// create a new texture and close the old one.
@@ -71,6 +86,14 @@ type TextureOptions struct {
 }
 
 func (o TextureOptions) validate(op string) error {
+	for _, mode := range []gputypes.AddressMode{o.AddressModeU, o.AddressModeV} {
+		if mode != 0 && mode != gputypes.AddressModeClampToEdge && mode != gputypes.AddressModeRepeat && mode != gputypes.AddressModeMirrorRepeat {
+			return &Error{Op: op, Err: fmt.Errorf("invalid address mode %v", mode)}
+		}
+	}
+	if o.Mipmaps && o.RenderTarget {
+		return &Error{Op: op, Err: errors.New("mipmapped render targets are not yet supported")}
+	}
 	if o.Depth && !o.RenderTarget {
 		return &Error{Op: op, Err: errors.New("Depth requires RenderTarget")}
 	}
@@ -133,7 +156,15 @@ func (r *Renderer) UploadTexture(src image.Image, opts TextureOptions) (*Texture
 	if err := r.checkTextureSize(op, w, h); err != nil {
 		return nil, err
 	}
-	return r.createTexture(packPixels(src), w, h, filter, opts)
+	pixels, err := uploadPixels(src, opts.Mipmaps, MipOptions{SRGB: opts.SRGB, AlphaWeighted: opts.MipAlphaWeighted})
+	if err != nil {
+		return nil, err
+	}
+	count := 1
+	if opts.Mipmaps {
+		count = mipLevelCount(w, h)
+	}
+	return r.createTexture(pixels, w, h, filter, opts, count)
 }
 
 // NewTexture allocates a w×h texture with undefined contents. Write it with
@@ -158,12 +189,16 @@ func (r *Renderer) NewTexture(w, h int, opts TextureOptions) (*Texture, error) {
 	if err := r.checkTextureSize(op, w, h); err != nil {
 		return nil, err
 	}
-	return r.createTexture(nil, w, h, filter, opts)
+	count := 1
+	if opts.Mipmaps {
+		count = mipLevelCount(w, h)
+	}
+	return r.createTexture(nil, w, h, filter, opts, count)
 }
 
 // createTexture runs allocateTexture on the executor. A nil pixels leaves the
 // texture unwritten.
-func (r *Renderer) createTexture(pixels []byte, w, h int, filter gputypes.FilterMode, opts TextureOptions) (*Texture, error) {
+func (r *Renderer) createTexture(pixels [][]byte, w, h int, filter gputypes.FilterMode, opts TextureOptions, mipLevels int) (*Texture, error) {
 	var (
 		result *Texture
 		err    error
@@ -173,7 +208,7 @@ func (r *Renderer) createTexture(pixels []byte, w, h int, filter gputypes.Filter
 			err = ErrClosed
 			return
 		}
-		result, err = r.allocateTexture(pixels, w, h, filter, opts)
+		result, err = r.allocateTexture(pixels, w, h, filter, opts, mipLevels)
 	}); runErr != nil {
 		return nil, runErr
 	}
@@ -202,7 +237,7 @@ func packPixels(src image.Image) []byte {
 	return packed.Pix
 }
 
-func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.FilterMode, opts TextureOptions) (_ *Texture, err error) {
+func (r *Renderer) allocateTexture(pixels [][]byte, w, h int, filter gputypes.FilterMode, opts TextureOptions, mipLevels int) (_ *Texture, err error) {
 	if r.sampledLayout == nil {
 		r.sampledLayout, err = r.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 			Label: r.label + ":sampled-image",
@@ -215,7 +250,12 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 			return nil, &Error{Op: "create sampled image layout", Err: err}
 		}
 	}
-	t := &Texture{r: r, format: opts.format(), width: w, height: h, renderTarget: opts.RenderTarget}
+	t := &Texture{
+		r: r, format: opts.format(), width: w, height: h,
+		mipLevels: mipLevels, autoMips: opts.Mipmaps,
+		mipOptions:   MipOptions{SRGB: opts.SRGB, AlphaWeighted: opts.MipAlphaWeighted},
+		renderTarget: opts.RenderTarget,
+	}
 	defer func() {
 		if err != nil {
 			t.release()
@@ -229,7 +269,7 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 	t.texture, err = r.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:         r.label + ":sampled-image",
 		Size:          size,
-		MipLevelCount: 1,
+		MipLevelCount: uint32(mipLevels),
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
 		Format:        t.format,
@@ -260,9 +300,16 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 			return nil, &Error{Op: "create sampled texture depth view", Err: err}
 		}
 	}
+	addressU, addressV := opts.AddressModeU, opts.AddressModeV
+	if addressU == 0 {
+		addressU = gputypes.AddressModeClampToEdge
+	}
+	if addressV == 0 {
+		addressV = gputypes.AddressModeClampToEdge
+	}
 	t.sampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
-		Label: r.label + ":linear-sampler", AddressModeU: gputypes.AddressModeClampToEdge, AddressModeV: gputypes.AddressModeClampToEdge,
-		MagFilter: filter, MinFilter: filter, MipmapFilter: gputypes.FilterModeNearest,
+		Label: r.label + ":linear-sampler", AddressModeU: addressU, AddressModeV: addressV,
+		MagFilter: filter, MinFilter: filter, MipmapFilter: filter, LodMaxClamp: float32(mipLevels - 1),
 	})
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture sampler", Err: err}
@@ -275,7 +322,7 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 		return nil, &Error{Op: "create sampled texture group", Err: err}
 	}
 	if pixels != nil {
-		if err = t.write(pixels); err != nil {
+		if err = t.writeLevels(pixels); err != nil {
 			return nil, err
 		}
 	}
@@ -286,17 +333,24 @@ func (r *Renderer) allocateTexture(pixels []byte, w, h int, filter gputypes.Filt
 	return t, nil
 }
 
-func (t *Texture) write(pixels []byte) error {
-	if err := t.r.device.Queue().WriteTexture(
-		&wgpu.ImageCopyTexture{Texture: t.texture}, pixels,
-		&wgpu.ImageDataLayout{BytesPerRow: uint32(t.width * 4), RowsPerImage: uint32(t.height)},
-		&wgpu.Extent3D{Width: uint32(t.width), Height: uint32(t.height), DepthOrArrayLayers: 1},
-	); err != nil {
-		return &Error{Op: "write sampled texture", Err: err}
+func (t *Texture) writeLevels(pixels [][]byte) error {
+	w, h := t.width, t.height
+	for level, data := range pixels {
+		if err := t.r.device.Queue().WriteTexture(
+			&wgpu.ImageCopyTexture{Texture: t.texture, MipLevel: uint32(level)}, data,
+			&wgpu.ImageDataLayout{BytesPerRow: uint32(w * 4), RowsPerImage: uint32(h)},
+			&wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1},
+		); err != nil {
+			return &Error{Op: "write sampled texture", Err: err}
+		}
+		w, h = max(1, w/2), max(1, h/2)
 	}
 	t.written = true
 	return nil
 }
+
+// MipLevelCount returns the immutable number of allocated mip levels.
+func (t *Texture) MipLevelCount() int { return t.mipLevels }
 
 // Size returns the immutable texture dimensions in pixels.
 func (t *Texture) Size() (int, int) { return t.width, t.height }
@@ -314,13 +368,17 @@ func (t *Texture) BindGroupLayout() *wgpu.BindGroupLayout { return t.r.sampledLa
 func (t *Texture) BindGroup() *wgpu.BindGroup             { return t.group }
 
 // Update replaces all pixels without changing the texture or its bind group.
-// Image dimensions must match the original upload.
+// Image dimensions must match the original upload. Automatic mip chains are
+// regenerated; caller-supplied multi-level chains require UpdateLevels.
 func (t *Texture) Update(src image.Image) error {
 	if t.r.closed.Load() {
 		return ErrClosed
 	}
 	if t.format == gputypes.TextureFormatRGBA16Float {
 		return &Error{Op: "update texture", Err: errors.New("a Float16 texture cannot be updated; draw it with Frame.RenderTo")}
+	}
+	if t.mipLevels > 1 && !t.autoMips {
+		return &Error{Op: "update texture", Err: errors.New("caller-supplied mip chains require UpdateLevels")}
 	}
 	w, h, err := imageSize("update texture", src)
 	if err != nil {
@@ -329,17 +387,11 @@ func (t *Texture) Update(src image.Image) error {
 	if w != t.width || h != t.height {
 		return &Error{Op: "update texture", Err: fmt.Errorf("size %dx%d differs from %dx%d", w, h, t.width, t.height)}
 	}
-	pixels := packPixels(src)
-	if runErr := t.r.exec.run(context.Background(), func() {
-		if t.closed || t.r.device == nil {
-			err = ErrClosed
-			return
-		}
-		err = t.write(pixels)
-	}); runErr != nil {
-		return runErr
+	pixels, err := uploadPixels(src, t.autoMips, t.mipOptions)
+	if err != nil {
+		return err
 	}
-	return err
+	return t.updatePackedLevels(pixels)
 }
 
 // ReadPixels returns a fresh, tightly packed NRGBA copy of this texture: the
@@ -423,7 +475,8 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 // a scratch target that has no TextureBinding usage, and the scratch target
 // is copied out exactly as the main target is. The scratch target is new,
 // so its first pass starts from the undefined layout. Rendering a same-size
-// quad samples every texel at its centre, which reproduces the bytes.
+// quad loads level 0 by integer pixel coordinates, independent of the
+// sampling filter, mip selection and wrapping mode.
 //
 // Sampling an SRGB texture decodes it, so its scratch target is also sRGB
 // and encodes the texels back on write. A view of the texture as
@@ -491,8 +544,8 @@ func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder
 	return img, nil
 }
 
-// blitShader copies a sampled texture over the whole target. Its UVs are
-// listed explicitly because naga v0.19.0 miscompiles the derived form for
+// blitShader loads level 0 over the whole target, ignoring sampler state.
+// Its UVs remain explicit because naga v0.19.0 miscompiles the derived form for
 // Metal; see TestDerivedUVShader.
 const blitShader = `
 @group(0) @binding(0) var tex: texture_2d<f32>;
@@ -510,7 +563,7 @@ struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 	o.uv = uv[i];
 	return o;
 }
-@fragment fn fs_main(o: Out) -> @location(0) vec4<f32> { return textureSample(tex, samp, o.uv); }`
+@fragment fn fs_main(o: Out) -> @location(0) vec4<f32> { return textureLoad(tex, vec2<i32>(o.pos.xy), 0); }`
 
 // blitPipeline returns the readback blit pipeline that writes format,
 // creating it on first use. It runs on the executor; the pipelines, their

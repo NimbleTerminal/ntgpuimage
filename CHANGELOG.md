@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add repeat and mirror-repeat addressing per texture axis.
+- Add CPU-generated mipmaps on image upload and update, plus `MipChain` for
+  CPU renderers and caller alpha-coverage adjustments. sRGB RGB averages in
+  linear light; alpha weighting is optional for transparent color images.
+- Add `UploadTextureLevels`, `UpdateLevels`, and `MipLevelCount` for explicit
+  full or partial chains. Supplied texels and coverage-adjusted alpha are
+  preserved. Readback always loads level 0 independently of sampler state.
+- Render-target/Float16 mip generation is not included in this image path.
+
 ## `0.3.0` — 2026-10-14
 
 - `TextureOptions.SRGB` stores a texture as `RGBA8UnormSrgb`. Uploads,

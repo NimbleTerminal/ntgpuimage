@@ -124,13 +124,14 @@ The library provides:
 - `Render`, with frame handles and timing statistics.
 - Pixel readback with row alignment and cancellation.
 - Image upload, sampling, updates, and texture readback.
+- CPU-generated and caller-supplied mip chains for 8-bit images, with repeat and mirror-repeat samplers.
 - `RenderToTexture` and `ReadPixels` for reading only selected frames.
 - `NewTexture` with `RenderTarget`, and `Frame.RenderTo` for drawing into a texture that later passes sample.
 - `RGBA8UnormSrgb` textures (`TextureOptions.SRGB`) for sampling, filtering, drawing and blending in linear light, and `RGBA16Float` render targets (`TextureOptions.Float16`).
 - Adapter information and errors that callers can inspect.
 
 It does not provide a scene engine, chart types, SVG parsing, an atlas
-manager, mipmaps, MSAA, arbitrary texture formats, or wrappers around WebGPU types.
+manager, render-target mipmaps, MSAA, arbitrary texture formats, or wrappers around WebGPU types.
 
 ## Accepting an externally owned device
 

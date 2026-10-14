@@ -140,6 +140,34 @@ formats:
   Unmodified v0.2.0 fails the same way, once in ten runs. The 55-pass run
   above is one without it.
 
+### Uploaded mipmaps and sampler addressing
+
+Run on 2026-10-14 with the pinned wgpu v0.34.5:
+
+- `task ci` passes (race tests, native/WASM vet, WASM build, Node tests).
+- The full native GPU suite passes on an Apple M5 Max Metal adapter, with the
+  existing `TestDerivedUVShader` skip. The Chrome WebGPU suite passes on the same
+  machine. Final focused tests for partial chains and independent addressing
+  also pass on both.
+- The mip upload/update, minified checker, address-axis, and sRGB round-trip
+  tests pass on Mesa Vulkan llvmpipe in an Ubuntu 24.04 arm64 Docker container
+  with the Khronos validation layer enabled and no validation errors. The
+  adapter reports CPU; this does not establish hardware Vulkan support for mips.
+
+Tests cover explicit mip selection, `textureSampleGrad`, trilinear blending,
+nearest mip selection, clamping to the last supplied level of a partial chain,
+repeat across a bilinear seam, negative/mirrored coordinates on each axis, and
+regeneration after Update. A 64x64 repeating checker minified beyond its last
+level resolves to gray for both plain and sRGB textures. Supplied per-level alpha
+is preserved. CPU tests cover linear-light sRGB averaging, optional alpha
+weighting, rebased image bounds, narrow and odd dimensions, and rejecting an
+invalid lower level before packing any pixels.
+
+Render-target mip generation is excluded. In the pinned Vulkan backend,
+`CreateTextureView` stores the base texture dimensions without reducing them by
+`BaseMipLevel`, so rendering to smaller mip views needs an upstream fix and
+separate validation of subresource transitions.
+
 ## Cancellation
 
 Tests cover calls that expire while queued and contexts cancelled during
