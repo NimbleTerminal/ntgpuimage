@@ -134,11 +134,21 @@ nearest filtering chooses the nearest level. The zero value keeps one level.
 ```go
 tex, err := r.UploadTexture(pixels, ntgpuimage.TextureOptions{
     Mipmaps: true,
+    Anisotropy: 16,
     SRGB: true,
     AddressModeU: gputypes.AddressModeRepeat,
     AddressModeV: gputypes.AddressModeRepeat,
 })
 ```
+
+`Anisotropy` improves detail when the texture footprint is stretched, such as
+terrain seen at a grazing angle. Zero or 1 disables it; 2 through 16 selects the
+sampler's maximum anisotropy. Values above 16 are rejected. Values above 1 require
+linear filtering (the default); combining them with nearest `Filter` is an error.
+The mag, min, and mip filters are all linear in this case. This option applies to
+ordinary uploads, caller-supplied levels, and render targets, including Float16.
+It does not require `Mipmaps`, although a full mip chain is useful for minification.
+Actual quality and sampling cost depend on the backend and device.
 
 Shaders must allow mip selection: `textureSampleLevel(..., 0.0)` and
 `textureLoad(..., 0)` always use the base level. Use `textureSample` in uniform

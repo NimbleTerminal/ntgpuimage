@@ -163,6 +163,26 @@ is preserved. CPU tests cover linear-light sRGB averaging, optional alpha
 weighting, rebased image bounds, narrow and odd dimensions, and rejecting an
 invalid lower level before packing any pixels.
 
+`TextureOptions.Anisotropy` was also checked on these three backends. Sampler
+creation and sampling pass for ordinary uploads, supplied mip levels, and
+RGBA8, sRGB, and Float16 render targets at 0, 1, 2, and 16. Unit tests reject
+values above 16 and anisotropy above 1 with nearest filtering. The Mesa run
+confirmed the Khronos validation layer was loaded and reported no validation
+errors.
+
+`TestAnisotropyGrazingChecker` projects a repeating 512×512 checker onto a
+horizontal plane in perspective and measures RMS contrast in a far band. The
+same mip chain is used with anisotropy off and at 16x:
+
+| Backend | Off | 16x |
+| --- | ---: | ---: |
+| Metal, Apple M5 Max | 61.95 | 82.39 |
+| Chrome WebGPU, Apple adapter | 61.95 | 82.39 |
+| Mesa Vulkan llvmpipe | 63.24 | 84.49 |
+
+The test requires a contrast increase rather than exact pixels because
+anisotropic sampling quality varies by implementation.
+
 Render-target mip generation is excluded. In the pinned Vulkan backend,
 `CreateTextureView` stores the base texture dimensions without reducing them by
 `BaseMipLevel`, so rendering to smaller mip views needs an upstream fix and

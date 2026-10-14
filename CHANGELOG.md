@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Add repeat and mirror-repeat addressing per texture axis.
+- Add `TextureOptions.Anisotropy` to all texture samplers: 0 or 1 disables
+  anisotropy, 2–16 sets the maximum. Values above 16 and values above 1 with
+  nearest filtering are rejected.
 - Add CPU-generated mipmaps on image upload and update, plus `MipChain` for
   CPU renderers and caller alpha-coverage adjustments. sRGB RGB averages in
   linear light; alpha weighting is optional for transparent color images.

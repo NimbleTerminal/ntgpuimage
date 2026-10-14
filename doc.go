@@ -19,6 +19,8 @@
 // UploadTextureLevels and Texture.UpdateLevels accept caller-supplied chains;
 // MipChain exposes the same generator for CPU renderers and alpha-coverage
 // adjustments. AddressModeU/V select clamp, repeat, or mirror-repeat sampling.
+// Anisotropy selects 2–16x anisotropic filtering with linear Filter, or 0/1
+// to disable it, on any texture.
 // Mipmaps currently exclude render targets and Float16. ReadPixels returns
 // level 0 regardless of the sampler's mip or addressing settings.
 //

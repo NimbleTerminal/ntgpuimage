@@ -48,6 +48,11 @@ type TextureOptions struct {
 	// Nearest filtering is useful for pixel art or an atlas without padded
 	// tiles.
 	Filter gputypes.FilterMode
+	// Anisotropy sets the sampler's maximum anisotropy. Zero or 1 disables it;
+	// 2 through 16 improves texture detail at grazing angles. Values above 16
+	// and anisotropy above 1 with nearest Filter are rejected. It applies to
+	// every texture, including render targets, independently of Mipmaps.
+	Anisotropy uint16
 	// AddressModeU and AddressModeV select clamp, repeat, or mirror-repeat.
 	// Zero selects ClampToEdge on each axis independently.
 	AddressModeU gputypes.AddressMode
@@ -86,6 +91,12 @@ type TextureOptions struct {
 }
 
 func (o TextureOptions) validate(op string) error {
+	if o.Anisotropy > 16 {
+		return &Error{Op: op, Err: fmt.Errorf("anisotropy %d exceeds maximum 16", o.Anisotropy)}
+	}
+	if o.Anisotropy > 1 && o.Filter == gputypes.FilterModeNearest {
+		return &Error{Op: op, Err: errors.New("anisotropy above 1 requires linear filtering")}
+	}
 	for _, mode := range []gputypes.AddressMode{o.AddressModeU, o.AddressModeV} {
 		if mode != 0 && mode != gputypes.AddressModeClampToEdge && mode != gputypes.AddressModeRepeat && mode != gputypes.AddressModeMirrorRepeat {
 			return &Error{Op: op, Err: fmt.Errorf("invalid address mode %v", mode)}
@@ -309,7 +320,7 @@ func (r *Renderer) allocateTexture(pixels [][]byte, w, h int, filter gputypes.Fi
 	}
 	t.sampler, err = r.device.CreateSampler(&wgpu.SamplerDescriptor{
 		Label: r.label + ":linear-sampler", AddressModeU: addressU, AddressModeV: addressV,
-		MagFilter: filter, MinFilter: filter, MipmapFilter: filter, LodMaxClamp: float32(mipLevels - 1),
+		MagFilter: filter, MinFilter: filter, MipmapFilter: filter, LodMaxClamp: float32(mipLevels - 1), Anisotropy: max(1, opts.Anisotropy),
 	})
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture sampler", Err: err}
