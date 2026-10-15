@@ -1,20 +1,8 @@
 # Changelog
 
-## Unreleased
-
-- Add repeat and mirror-repeat addressing per texture axis.
-- Add `TextureOptions.Anisotropy` to all texture samplers: 0 or 1 disables
-  anisotropy, 2–16 sets the maximum. Values above 16 and values above 1 with
-  nearest filtering are rejected.
-- Add CPU-generated mipmaps on image upload and update, plus `MipChain` for
-  CPU renderers and caller alpha-coverage adjustments. sRGB RGB averages in
-  linear light; alpha weighting is optional for transparent color images.
-- Add `UploadTextureLevels`, `UpdateLevels`, and `MipLevelCount` for explicit
-  full or partial chains. Supplied texels and coverage-adjusted alpha are
-  preserved. Readback always loads level 0 independently of sampler state.
-- Render-target/Float16 mip generation is not included in this image path.
-
 ## `0.3.0` — 2026-10-14
+
+### Texture formats
 
 - `TextureOptions.SRGB` stores a texture as `RGBA8UnormSrgb`. Uploads,
   `Update` and `ReadPixels` exchange the same sRGB-encoded bytes as before.
@@ -27,7 +15,33 @@
   `BindGroup` with `textureSample` or `textureLoad`.
 - `Texture.Format` reports the storage format, for a pipeline that draws
   into the texture.
-- Checked on Metal, in Chrome, and on Vulkan under the validation layer.
+- Checked on Metal, in Chrome, and on Vulkan (NVIDIA GB10) under the
+  validation layer.
+
+### Mipmaps and samplers
+
+- Add CPU-generated mipmaps on image upload and update, plus `MipChain` for
+  CPU renderers and caller alpha-coverage adjustments. sRGB RGB averages in
+  linear light; alpha weighting is optional for transparent color images.
+- Add `UploadTextureLevels`, `UpdateLevels`, and `MipLevelCount` for explicit
+  full or partial chains. Supplied texels and coverage-adjusted alpha are
+  preserved. Readback always loads level 0 independently of sampler state.
+- Render-target/Float16 mip generation is not included in this image path.
+- Add repeat and mirror-repeat addressing per texture axis.
+- Add `TextureOptions.Anisotropy` to all texture samplers: 0 or 1 disables
+  anisotropy, 2–16 sets the maximum. Values above 16 and values above 1 with
+  nearest filtering are rejected.
+- Checked on Metal, in Chrome, and on Mesa Vulkan llvmpipe (a software
+  adapter) under the validation layer.
+
+### Known issues
+
+- On Vulkan, gogpu v0.34.5 can give a new texture the stale usage of a
+  closed one, so its first submission starts with a barrier from the wrong
+  layout. The validation layer reports it; pixels were correct on the
+  NVIDIA GB10. It also affects v0.2.0. See [VALIDATION.md](VALIDATION.md).
+- On Vulkan, `New` intermittently fails with `vkMapMemory returned null
+  pointer` on the NVIDIA GB10, about one run in ten, as v0.2.0 does.
 
 ## `0.2.0` — 2026-10-13
 

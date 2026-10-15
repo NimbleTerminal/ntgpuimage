@@ -16,7 +16,7 @@ The library manages the render target, texture resources, GPU execution, and
 readback. Shaders, pipelines, buffers, and drawing use upstream WebGPU types
 directly.
 
-The current release is v0.2.0. The API may change before v1.0.
+The current release is v0.3.0. The API may change before v1.0.
 [DESIGN.md](DESIGN.md) explains the design and compares related GoGPU libraries.
 [VALIDATION.md](VALIDATION.md) records what was tested and how.
 
@@ -25,7 +25,7 @@ The current release is v0.2.0. The API may change before v1.0.
 Install the library:
 
 ```sh
-go get nimbleterminal.dev/ntgpuimage@v0.2.0
+go get nimbleterminal.dev/ntgpuimage@v0.3.0
 ```
 
 ```go
