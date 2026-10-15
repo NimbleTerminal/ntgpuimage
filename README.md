@@ -1,5 +1,9 @@
 # ntgpuimage
 
+[![CI](https://github.com/NimbleTerminal/ntgpuimage/actions/workflows/ci.yml/badge.svg)](https://github.com/NimbleTerminal/ntgpuimage/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/nimbleterminal.dev/ntgpuimage.svg)](https://pkg.go.dev/nimbleterminal.dev/ntgpuimage)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
+
 [`ntgpuimage`](https://github.com/NimbleTerminal/ntgpuimage) is an offscreen WebGPU rendering for Golang, built on
 [gogpu/wgpu](https://github.com/gogpu/wgpu). The Go package is `ntgpuimage`, imported as `nimbleterminal.dev/ntgpuimage`.
 
