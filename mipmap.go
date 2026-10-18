@@ -54,11 +54,73 @@ var srgbLinear = func() (table [256]float64) {
 }()
 
 func unitByte(v float64) byte { return byte(math.Round(min(1, max(0, v)) * 255)) }
-func encodeSRGB(v float64) byte {
+
+// encodeSRGBExact is the reference 8-bit sRGB encoder: the IEC 61966-2-1
+// transfer function in float64, rounded half away from zero.
+func encodeSRGBExact(v float64) byte {
 	if v <= 0.0031308 {
 		return unitByte(v * 12.92)
 	}
 	return unitByte(1.055*math.Pow(v, 1/2.4) - 0.055)
+}
+
+// srgbThreshold[n] is the linear value at which encodeSRGBExact's result rises
+// from n to n+1: the inverse transfer function at (n+0.5)/255. Thresholds below
+// 0.04045 encoded lie on the linear segment; the junction itself falls strictly
+// between the thresholds for 10 and 11.
+var srgbThreshold = func() (table [255]float64) {
+	for n := range table {
+		x := (float64(n) + 0.5) / 255
+		if x <= 0.04045 {
+			table[n] = x / 12.92
+		} else {
+			table[n] = math.Pow((x+0.055)/1.055, 2.4)
+		}
+	}
+	return
+}()
+
+// srgbGuard is the half-width of the band around each threshold, and around the
+// transfer-function junction, inside which encodeSRGB defers to the exact
+// encoder. The float64 evaluation of the transfer function is accurate to about
+// 1e-13 in encoded units, while the slope is at least 112 encoded units per
+// linear unit, so outside the band the rounded result is unambiguous.
+const srgbGuard = 1e-9
+
+// srgbBuckets subdivides [0, 1] so that each bucket holds at most two thresholds;
+// the linear segment spaces them 3.0e-4 apart and the bucket width is 2.4e-4.
+const srgbBuckets = 4096
+
+// srgbBucketCount[b] is a lower bound on the number of thresholds at or below
+// every value in bucket b, so the scan from it only moves forward.
+var srgbBucketCount = func() (table [srgbBuckets + 1]uint8) {
+	for b := range table {
+		start := float64(b) / srgbBuckets
+		count := 0
+		for count < len(srgbThreshold) && srgbThreshold[count] <= start {
+			count++
+		}
+		table[b] = uint8(max(0, count-1))
+	}
+	return
+}()
+
+// encodeSRGB returns exactly encodeSRGBExact(v) for every input. In [0, 1] it
+// counts the thresholds at or below v with one table lookup and a short scan;
+// values within srgbGuard of a threshold or of the segment junction, and
+// values outside [0, 1] including NaN, use the exact encoder.
+func encodeSRGB(v float64) byte {
+	if !(v >= 0 && v <= 1) {
+		return encodeSRGBExact(v)
+	}
+	n := int(srgbBucketCount[int(v*srgbBuckets)])
+	for n < len(srgbThreshold) && srgbThreshold[n] <= v {
+		n++
+	}
+	if (n > 0 && v-srgbThreshold[n-1] < srgbGuard) || (n < len(srgbThreshold) && srgbThreshold[n]-v < srgbGuard) || math.Abs(v-0.0031308) < srgbGuard {
+		return encodeSRGBExact(v)
+	}
+	return byte(n)
 }
 
 // unitFloat[i] is float64(i)/255, the exact value the filters divide out of
