@@ -1,0 +1,202 @@
+# Date: 2026-10-18
+# System: Apple M5 Max; macOS 27.0 arm64; Go 1.27.2
+# Library source: before = v0.3.0 (9cb8f41); after = v0.3.0 + box reduction (ef7d7d6) + table encoder (b837b69)
+# Benchmark: mipmap_bench_test.go in this tree (CPU only, no GPU)
+# Command: go test -run='^$' -bench=BenchmarkMipChain -benchmem -benchtime=1s -count=3 .
+# Runs were sequential with no other benchmark running. Output bytes are identical
+# before and after for every level (TestMipChainMatchesGeneralFilter, TestEncodeSRGB*).
+#
+# Medians, ms/op (bytes/op and allocs/op unchanged):
+#   case                          v0.3.0   +box     +box+encoder
+#   256x256 srgb+alpha             1.319    1.290    0.335
+#   512x512 linear                 1.317    0.795    0.784
+#   512x512 srgb                   5.184    4.927    1.331
+#   512x512 alpha                  1.412    0.779    0.770
+#   512x512 srgb+alpha             5.250    5.191    1.440
+#   512x512 translucent srgb+alpha 5.408    5.192    1.430
+#   1024x1024 srgb+alpha          21.228   20.601    5.351
+#   512x256 srgb+alpha             2.622    2.596    0.690
+#   511x511 srgb+alpha (general)   6.700    6.857*   2.805
+#   513x257 srgb+alpha (general)   3.182    3.205*   1.242
+#   * general filter code is unchanged by the box commit; the difference is run noise.
+#
+# Consumer: ntcharts-osm examples/mapview3d benchmark_test.go, ntcharts3d v0.3.1,
+# nt3d v0.2.0, ntgpuimage selected through a temporary -modfile replace (the
+# sibling trees were not modified). 144 ops x 3 runs, medians:
+#   BenchmarkMap3DTextureReplacement   15.417 ms -> 10.407 ms  (4,087,291 B/op, 39 allocs/op both)
+#   BenchmarkMap3DNewTexture            0.202 ms ->  0.214 ms  (noise; no mip work until first sample)
+#   BenchmarkMap3DCamera/640x320/aniso4 8.828 ms ->  9.017 ms  (noise; sampling only, same chain bytes)
+
+## Isolated: v0.3.0
+goos: darwin
+goarch: arm64
+pkg: nimbleterminal.dev/ntgpuimage
+cpu: Apple M5 Max
+BenchmarkMipChain/256x256/srgb+alpha-18         	     920	   1284874 ns/op	  350316 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	     910	   1318594 ns/op	  350309 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	     903	   1331663 ns/op	  350309 B/op	      20 allocs/op
+BenchmarkMipChain/512x512/linear-18             	     895	   1327718 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	     901	   1316804 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	     919	   1302338 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     231	   5183870 ns/op	 1398973 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     229	   5224449 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     230	   5171138 ns/op	 1398973 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	     837	   1428727 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	     868	   1411616 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	     866	   1369988 ns/op	 1398982 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     220	   5425562 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     225	   5238423 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     229	   5250146 ns/op	 1398970 B/op	      22 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      56	  21134135 ns/op	 5593362 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      56	  21227948 ns/op	 5593374 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      55	  21340328 ns/op	 5593371 B/op	      24 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     442	   2641936 ns/op	  699920 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     459	   2612656 ns/op	  699921 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     458	   2621813 ns/op	  699922 B/op	      22 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     178	   6720096 ns/op	 1398810 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     177	   6699632 ns/op	 1398810 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     180	   6582834 ns/op	 1398810 B/op	      20 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     378	   3182255 ns/op	  708114 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     378	   3183837 ns/op	  708114 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     379	   3177181 ns/op	  708113 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     222	   5399027 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     222	   5408040 ns/op	 1398973 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     219	   5442978 ns/op	 1398970 B/op	      22 allocs/op
+PASS
+ok  	nimbleterminal.dev/ntgpuimage	35.921s
+
+## Isolated: + box reduction (ef7d7d6)
+goos: darwin
+goarch: arm64
+pkg: nimbleterminal.dev/ntgpuimage
+cpu: Apple M5 Max
+BenchmarkMipChain/256x256/srgb+alpha-18         	     932	   1288131 ns/op	  350322 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	     931	   1291430 ns/op	  350311 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	     928	   1289761 ns/op	  350310 B/op	      20 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1489	    797072 ns/op	 1398980 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1530	    793473 ns/op	 1398981 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1510	    795323 ns/op	 1398980 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     242	   4927189 ns/op	 1398977 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     243	   4924595 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     243	   4937445 ns/op	 1398975 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1531	    778141 ns/op	 1398980 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1552	    778551 ns/op	 1398984 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1532	    783141 ns/op	 1398981 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     231	   5178801 ns/op	 1398977 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     230	   5193275 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     230	   5190904 ns/op	 1398975 B/op	      22 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      57	  20620314 ns/op	 5593368 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      57	  20599879 ns/op	 5593368 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	      57	  20600919 ns/op	 5593362 B/op	      24 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     462	   2594766 ns/op	  699921 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     460	   2598557 ns/op	  699923 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	     463	   2594075 ns/op	  699924 B/op	      22 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     169	   7162349 ns/op	 1398816 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     170	   7048262 ns/op	 1398819 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     169	   7111374 ns/op	 1398817 B/op	      20 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     361	   3319978 ns/op	  708114 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     361	   3322386 ns/op	  708115 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     360	   3322976 ns/op	  708116 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     230	   5195192 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     230	   5192018 ns/op	 1398971 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     230	   5188881 ns/op	 1398973 B/op	      22 allocs/op
+PASS
+ok  	nimbleterminal.dev/ntgpuimage	36.003s
+
+## Isolated: odd controls re-run after restoring the general filter verbatim
+goos: darwin
+goarch: arm64
+pkg: nimbleterminal.dev/ntgpuimage
+cpu: Apple M5 Max
+BenchmarkMipChain/511x511/srgb+alpha-18         	     172	   6910825 ns/op	 1398842 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     174	   6856973 ns/op	 1398847 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     175	   6831184 ns/op	 1398813 B/op	      20 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     373	   3213209 ns/op	  708127 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     374	   3204822 ns/op	  708112 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     374	   3205256 ns/op	  708114 B/op	      22 allocs/op
+PASS
+ok  	nimbleterminal.dev/ntgpuimage	7.305s
+
+## Isolated: + box reduction + table encoder (b837b69)
+goos: darwin
+goarch: arm64
+pkg: nimbleterminal.dev/ntgpuimage
+cpu: Apple M5 Max
+BenchmarkMipChain/256x256/srgb+alpha-18         	    3024	    334940 ns/op	  350310 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	    3621	    332645 ns/op	  350312 B/op	      20 allocs/op
+BenchmarkMipChain/256x256/srgb+alpha-18         	    3583	    335070 ns/op	  350310 B/op	      20 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1485	    785477 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1520	    784177 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/linear-18             	    1531	    783283 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     897	   1328057 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     896	   1331355 ns/op	 1398974 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb-18               	     900	   1352634 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1548	    770276 ns/op	 1398971 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1574	    760547 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/alpha-18              	    1561	    777525 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     885	   1340037 ns/op	 1398972 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     788	   1449828 ns/op	 1398996 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/srgb+alpha-18         	     787	   1439703 ns/op	 1398975 B/op	      22 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	     219	   5388019 ns/op	 5593369 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	     224	   5344164 ns/op	 5593369 B/op	      24 allocs/op
+BenchmarkMipChain/1024x1024/srgb+alpha-18       	     223	   5350873 ns/op	 5593371 B/op	      24 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	    1726	    690655 ns/op	  699928 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	    1743	    689491 ns/op	  699925 B/op	      22 allocs/op
+BenchmarkMipChain/512x256/srgb+alpha-18         	    1740	    689436 ns/op	  699927 B/op	      22 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     428	   2803785 ns/op	 1398821 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     427	   2804645 ns/op	 1398818 B/op	      20 allocs/op
+BenchmarkMipChain/511x511/srgb+alpha-18         	     426	   2805922 ns/op	 1398822 B/op	      20 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     956	   1241935 ns/op	  708117 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     985	   1239154 ns/op	  708114 B/op	      22 allocs/op
+BenchmarkMipChain/513x257/srgb+alpha-18         	     940	   1272497 ns/op	  708114 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     824	   1433449 ns/op	 1398976 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     835	   1430383 ns/op	 1398978 B/op	      22 allocs/op
+BenchmarkMipChain/512x512/translucent/srgb+alpha-18         	     838	   1429852 ns/op	 1398979 B/op	      22 allocs/op
+PASS
+ok  	nimbleterminal.dev/ntgpuimage	35.712s
+
+## Consumer before: ntgpuimage v0.3.0 via modfile replace
+goos: darwin
+goarch: arm64
+pkg: github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d
+cpu: Apple M5 Max
+BenchmarkMap3DTextureReplacement-18    	     144	  15416657 ns/op	 4087333 B/op	      39 allocs/op
+BenchmarkMap3DTextureReplacement-18    	     144	  15339507 ns/op	 4087294 B/op	      39 allocs/op
+BenchmarkMap3DTextureReplacement-18    	     144	  15449354 ns/op	 4087292 B/op	      39 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    202779 ns/op	 1048706 B/op	       2 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    202328 ns/op	 1048708 B/op	       2 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    201735 ns/op	 1048706 B/op	       2 allocs/op
+PASS
+ok  	github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d	7.027s
+goos: darwin
+goarch: arm64
+pkg: github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d
+cpu: Apple M5 Max
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   8827989 ns/op	 1638927 B/op	       8 allocs/op
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   8750350 ns/op	 1638887 B/op	       8 allocs/op
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   9345289 ns/op	 1638889 B/op	       8 allocs/op
+PASS
+ok  	github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d	4.206s
+
+## Consumer after: ntgpuimage b837b69 via modfile replace
+goos: darwin
+goarch: arm64
+pkg: github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d
+cpu: Apple M5 Max
+BenchmarkMap3DTextureReplacement-18    	     144	  10407101 ns/op	 4087331 B/op	      39 allocs/op
+BenchmarkMap3DTextureReplacement-18    	     144	  10407418 ns/op	 4087291 B/op	      39 allocs/op
+BenchmarkMap3DTextureReplacement-18    	     144	  10392683 ns/op	 4087291 B/op	      39 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    213882 ns/op	 1048707 B/op	       2 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    213813 ns/op	 1048707 B/op	       2 allocs/op
+BenchmarkMap3DNewTexture-18            	     144	    194631 ns/op	 1048705 B/op	       2 allocs/op
+PASS
+ok  	github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d	4.880s
+goos: darwin
+goarch: arm64
+pkg: github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d
+cpu: Apple M5 Max
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   8896474 ns/op	 1638926 B/op	       8 allocs/op
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   9016632 ns/op	 1638885 B/op	       8 allocs/op
+BenchmarkMap3DCamera/640x320/aniso4-18         	     144	   9520509 ns/op	 1638886 B/op	       8 allocs/op
+PASS
+ok  	github.com/NimbleMarkets/ntcharts-osm/examples/mapview3d	4.200s

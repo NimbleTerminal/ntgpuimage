@@ -186,8 +186,10 @@ are allowed, and sampling clamps to the last supplied level. `UpdateLevels`
 requires the original count and dimensions. `ReadPixels` always returns level 0.
 
 The CPU generator uses an area-weighted box filter, including the edges of odd
-sizes and rectangular textures such as 384×256. With `SRGB`, RGB is averaged in linear light and encoded
-again; alpha stays linear. Without `SRGB`, channels stay in their numeric space.
+sizes and rectangular textures such as 384×256. Levels whose axes halve exactly,
+including the 1×N tail of a chain, take a direct 2×2 reduction with identical
+output, so power-of-two textures generate fastest. With `SRGB`, RGB is averaged
+in linear light and encoded again with an exact threshold lookup; alpha stays linear. Without `SRGB`, channels stay in their numeric space.
 `MipAlphaWeighted` on automatic uploads, or `MipOptions.AlphaWeighted` on the CPU
 helper, weights RGB by alpha to avoid dark fringes in transparent color images.
 Leave it false for data maps. Neither mode preserves alpha-test coverage;

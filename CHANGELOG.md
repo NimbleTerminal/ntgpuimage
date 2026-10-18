@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Mip generation performance
+
+- `MipChain`, and automatic mipmaps on upload and `Update`, reduce each level
+  with a direct 2×2 box when both axes halve exactly, including the 1×N and
+  N×1 tail of a chain. Odd dimensions keep the general area-overlap filter.
+  Output is byte-identical to v0.3.0 for every level and option.
+- sRGB encoding looks up rounding thresholds instead of calling `math.Pow`
+  per channel, with the exact encoder used near every boundary. Output is
+  identical for every input.
+- A 512×512 sRGB alpha-weighted chain takes about 1.4 ms instead of 5.3 ms
+  on an Apple M5 Max; 1024×1024 about 5.4 ms instead of 21 ms. The
+  ntcharts-osm map texture replacement benchmark (nt3d v0.2.0, ntcharts3d
+  v0.3.1) drops from about 15.4 ms to 10.4 ms. Allocations are unchanged. See
+  `benchmarks/2026-10-18-mipchain.txt`.
+- Checked with `task ci`, on Metal (Apple M5 Max), in Chrome, and on Vulkan
+  (NVIDIA GB10) under the validation layer.
+- Release guidance: tag as `v0.3.1`. No API, semantic, or GPU upload contract
+  changes; nt3d and ntcharts3d need no code changes. Consumers pick it up by
+  bumping the `nimbleterminal.dev/ntgpuimage` requirement (directly, or via a
+  new nt3d patch release that requires it).
+
 ## `0.3.0` — 2026-10-14
 
 ### Texture formats

@@ -188,6 +188,33 @@ Render-target mip generation is excluded. In the pinned Vulkan backend,
 `BaseMipLevel`, so rendering to smaller mip views needs an upstream fix and
 separate validation of subresource transitions.
 
+### Mip generation fast paths
+
+Run on 2026-10-18 with the pinned wgpu v0.34.5, after adding the 2×2 box
+reduction and the threshold-table sRGB encoder:
+
+- `TestMipChainMatchesGeneralFilter` compares every level of `MipChain` byte for
+  byte against the unchanged general area filter for all four option
+  combinations over 1×1, 1×N, N×1, even, odd, non-square, mixed, and 512×512
+  chains, using adversarial alpha/color fixtures, opaque fixtures, nonzero
+  bounds with wider strides, and source-immutability checks. Other image types
+  (RGBA, Gray, RGBA64, NRGBA64) and zero-alpha blocks are covered separately.
+- `TestEncodeSRGB*` steps through every rounding threshold, the transfer-function
+  junction, and the guard-band edges by neighbouring float64 values, every
+  two-tap opaque average, and millions of random uniform, four-tap, and
+  alpha-weighted averages. No input differs from the float64 transfer function.
+- `task ci` passes. The native GPU suite, including the mip upload, automatic
+  mipmap, minified checker, and anisotropy tests that sample generated chains,
+  passes on an Apple M5 Max Metal adapter (with the existing `TestDerivedUVShader`
+  skip) and in Chrome WebGPU on the same machine. `task test-vulkan-remote`
+  passes on an NVIDIA GB10 Vulkan adapter under the Khronos validation layer
+  with zero validation errors; this is a hardware adapter, unlike the earlier
+  llvmpipe run.
+- Software/GPU parity is by construction: nt3d samples the same `MipChain`
+  levels the GPU uploads, and those bytes are unchanged.
+
+Measurements are in `benchmarks/2026-10-18-mipchain.txt`.
+
 ## Cancellation
 
 Tests cover calls that expire while queued and contexts cancelled during
