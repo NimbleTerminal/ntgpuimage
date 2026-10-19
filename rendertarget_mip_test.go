@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/gogpu/gputypes"
@@ -378,4 +379,43 @@ func TestRenderTargetMipFailedPassLeavesRendererUsable(t *testing.T) {
 	}
 	renderInto(t, r, tex, clearTo(gputypes.Color{A: 1}))
 	expectSolid(t, readLevelForTest(t, tex, 2), [4]byte{0, 0, 0, 255})
+}
+
+// TestRenderTargetMipUpdateFirst makes Update the first write to a blank
+// mipmapped render target. The lower levels have never been written, so the
+// regeneration pass must start them from the layout WriteTexture left them
+// in rather than one a RenderTo would have set. The CPU chain of the
+// uploaded image is the reference.
+func TestRenderTargetMipUpdateFirst(t *testing.T) {
+	r := newTestRenderer(t, Options{Width: 2, Height: 2})
+	for _, tc := range []struct {
+		name string
+		opts TextureOptions
+		mips MipOptions
+	}{
+		{"plain", TextureOptions{RenderTarget: true, Mipmaps: true}, MipOptions{}},
+		{"srgb", TextureOptions{RenderTarget: true, Mipmaps: true, SRGB: true}, MipOptions{SRGB: true}},
+		{"depth", TextureOptions{RenderTarget: true, Mipmaps: true, Depth: true}, MipOptions{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tex, err := r.NewTexture(64, 32, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tex.Close()
+			src := adversarialNRGBA(rand.New(rand.NewPCG(7, 11)), image.Rect(0, 0, 64, 32))
+			if err := tex.Update(src); err != nil {
+				t.Fatal(err)
+			}
+			expectChainClose(t, tc.name+" first update", tex, tc.mips)
+			// A second Update and a RenderTo must chain onto the layouts the
+			// first regeneration left behind.
+			if err := tex.Update(solid(64, 32, color.NRGBA{R: 255, A: 255})); err != nil {
+				t.Fatal(err)
+			}
+			expectSolid(t, readLevelForTest(t, tex, tex.MipLevelCount()-1), [4]byte{255, 0, 0, 255})
+			renderInto(t, r, tex, clearTo(gputypes.Color{G: 1, A: 1}))
+			expectSolid(t, readLevelForTest(t, tex, tex.MipLevelCount()-1), [4]byte{0, 255, 0, 255})
+		})
+	}
 }

@@ -53,6 +53,11 @@ type Texture struct {
 	// then holds the attachment usage for good, and ReadPixels must not copy
 	// from the texture directly; see readPixelsByBlit.
 	drawn bool
+	// mipsFilled is set once every level below 0 holds supplied or generated
+	// texels and rests in the sampled layout. A first Update writes only
+	// level 0, so generateMips must then start the lower levels from the
+	// undefined layout rather than the sampled one.
+	mipsFilled bool
 }
 
 // TextureOptions configures UploadTexture and NewTexture.
@@ -377,6 +382,9 @@ func (t *Texture) writeLevels(pixels [][]byte) error {
 		w, h = max(1, w/2), max(1, h/2)
 	}
 	t.written = true
+	if len(pixels) == t.mipLevels {
+		t.mipsFilled = true
+	}
 	return nil
 }
 

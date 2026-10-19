@@ -254,9 +254,11 @@ func (r *Renderer) mipSinkBuffer() (*wgpu.Buffer, error) {
 // scratch target and a copy into the level, then the one-texel copy into the
 // sink buffer that settles the usage tracker. Level 0 must already be in the
 // sampled layout; each generated level is left there too. Levels below 0
-// are in the sampled layout when they have been written before (t.written),
-// and undefined otherwise. On failure the encoder may hold a partial pass
-// and must be discarded.
+// are in the sampled layout once a generation or a full-chain upload has
+// filled them (t.mipsFilled), and undefined otherwise: WriteTexture into
+// level 0 alone leaves them undefined. The caller sets mipsFilled once the
+// recorded work is submitted. On failure the encoder may hold a partial
+// pass and must be discarded.
 func (t *Texture) generateMips(enc *wgpu.CommandEncoder) error {
 	pipeline, err := t.r.downsamplePipeline(t.format)
 	if err != nil {
@@ -267,7 +269,7 @@ func (t *Texture) generateMips(enc *wgpu.CommandEncoder) error {
 		return err
 	}
 	var previous gputypes.TextureUsage
-	if t.written {
+	if t.mipsFilled {
 		previous = gputypes.TextureUsageTextureBinding
 	}
 	for level := 1; level < t.mipLevels; level++ {
@@ -326,6 +328,7 @@ func (t *Texture) regenerateMips() error {
 	}
 	r.device.Poll(wgpu.PollWait)
 	r.device.FreeCommandBuffer(cmd)
+	t.mipsFilled = true
 	return nil
 }
 

@@ -206,6 +206,13 @@ with `RenderTarget` regenerates the chain on the GPU after each
   regenerates on `RenderTo`, a failed callback leaves the renderer usable, and
   a second `RenderTo` into the same target in one frame is rejected before its
   callback runs.
+- `TestRenderTargetMipUpdateFirst` (added 2026-10-19) makes `Update` the first
+  write to a blank mipmapped target. Under the validation layer this reported
+  `VUID-vkCmdDraw-None-09600` for every level below 0: `WriteTexture` moves
+  only the level it writes, so the lower levels were still undefined while the
+  generation pass transitioned them from the sampled layout. The texture now
+  tracks whether its lower levels have been filled and starts them from the
+  undefined layout until then. Zero validation errors after the fix.
 - `task ci` passes. The full native suite passes on Metal (with the existing
   `TestDerivedUVShader` skip) and in Chrome. `task test-vulkan-remote` passes
   on the NVIDIA GB10 under the Khronos validation layer with zero validation

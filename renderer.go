@@ -109,6 +109,9 @@ func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
 		return err
 	}
 	t.written, t.drawn, t.mipFrame = true, true, f.Seq
+	if t.generatesMips() {
+		t.mipsFilled = true
+	}
 	return nil
 }
 
