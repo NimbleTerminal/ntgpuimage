@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## `0.4.0` — 2026-10-19
 
 ### Mipmapped render targets
 
@@ -9,7 +9,8 @@
 - After each `Frame.RenderTo` and `Update`, the GPU regenerates every lower
   level in the same submission. Each texel is one bilinear tap at the
   destination texel center, a 2×2 box for even sizes. `SRGB` targets average
-  in linear light. Levels match `MipChain` within 2/255 per channel.
+  in linear light. Levels match `MipChain` within 2/255 per channel over an
+  exactly-halving 64×32 chain.
 - `UpdateLevels` and `UploadTextureLevels` store the supplied levels. The next
   `RenderTo` or `Update` regenerates them.
 - Depth attachments keep one level. `ReadPixels` returns level 0.
@@ -30,7 +31,6 @@
   1.4 ms, and 1024×1024 from 21 ms to 5.4 ms. The ntcharts-osm texture
   replacement benchmark drops from 15.4 ms to 10.4 ms. Allocations are
   unchanged. See `benchmarks/2026-10-18-mipchain.txt`.
-- No API changes. Release as `v0.3.1`; consumers only bump the requirement.
 
 Checked with `task ci`, on Metal (Apple M5 Max), in Chrome, and on Vulkan
 (NVIDIA GB10) under the validation layer.
