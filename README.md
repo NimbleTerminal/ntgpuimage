@@ -195,10 +195,21 @@ helper, weights RGB by alpha to avoid dark fringes in transparent color images.
 Leave it false for data maps. Neither mode preserves alpha-test coverage;
 nt3d can adjust the generated alpha before uploading explicit levels.
 
-Mipmaps currently apply to uploaded/updated 8-bit textures, including blank
-`NewTexture` images subsequently filled by `Update`. `RenderTarget` and `Float16`
-exclude `Mipmaps`. Procedural GPU mip generation needs additional backend work;
-in particular wgpu v0.34.5 does not shrink Vulkan mip-view framebuffer dimensions.
+Mipmaps apply to uploaded and updated 8-bit textures, including blank
+`NewTexture` images subsequently filled by `Update`, and to render targets of
+every format. A `RenderTarget` with `Mipmaps`, or one created from a supplied
+chain, regenerates every lower level on the GPU after each `Frame.RenderTo`,
+inside the same frame, and after `Update`. Each level samples the level above
+it once per texel with a linear clamping sampler: for even sizes that is the
+2×2 box average, for odd sizes a bilinear blend of the nearest source texels.
+An `SRGB` target averages in linear light and encodes on write; alpha is not
+weighted into RGB. Generated levels stay within 2/255 per channel of
+`MipChain` over a 64×32 chain on Metal, Chrome, and Vulkan. The `Depth`
+attachment keeps one level, `ReadPixels` returns level 0, and such a texture
+can be drawn into once per frame. Because gogpu v0.34.5 reports every texture
+view at the base size, each level is drawn into a persistent scratch target of
+its own size and copied into place; the scratch targets hold about a third of
+level 0.
 
 ## Texture formats
 
@@ -222,7 +233,7 @@ target format. Alpha is never encoded.
 `Float16` requires `RenderTarget` and suits a linear scene that is later
 resolved or tone mapped into an 8-bit target. Read it in a later pass
 through `BindGroup()` with `textureSample` or `textureLoad`. `Depth: true`
-works with every format. `SRGB` and `Float16` are exclusive.
+and `Mipmaps: true` work with every format. `SRGB` and `Float16` are exclusive.
 
 ## Rendering into a texture
 
@@ -260,6 +271,8 @@ img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
   close the old one. `Renderer.Resize` does not affect textures.
 - `Depth: true` allocates a `Depth24Plus` attachment for the texture and
   requires `RenderTarget`. The nested `Frame.Depth` is nil otherwise.
+- `Mipmaps: true` regenerates the texture's mip chain on the GPU after each
+  `RenderTo`; see [Mipmaps and repeating textures](#mipmaps-and-repeating-textures).
 - `UploadTexture` also accepts `RenderTarget`, for drawing over an image.
 - `RenderTo` cannot be nested. An error from its callback fails the frame
   even if the outer callback ignores it. Sampling a texture that has never
@@ -412,8 +425,9 @@ Raw output, including throughput and allocations:
   `TextureBinding` usage. Draw into a `RenderTarget` texture with
   `Frame.RenderTo` instead.
 - Render-target textures have no resize; create a new one.
-- No render-target mipmaps, MSAA, or partial texture updates. The main target is always
-  `RGBA8Unorm`.
+- No MSAA or partial texture updates. The main target is always `RGBA8Unorm`
+  and has no mip chain; draw into a `RenderTarget` texture with `Mipmaps` for one.
+- A mipmapped `RenderTarget` accepts one `Frame.RenderTo` per frame.
 - On desktop OpenGL, gogpu does not enable `GL_FRAMEBUFFER_SRGB`, so drawing
   into an `SRGB` texture there probably stores linear values unencoded.
   Sampling decodes as elsewhere. This follows from reading gogpu's source

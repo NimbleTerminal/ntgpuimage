@@ -21,8 +21,9 @@
 // adjustments. AddressModeU/V select clamp, repeat, or mirror-repeat sampling.
 // Anisotropy selects 2–16x anisotropic filtering with linear Filter, or 0/1
 // to disable it, on any texture.
-// Mipmaps currently exclude render targets and Float16. ReadPixels returns
-// level 0 regardless of the sampler's mip or addressing settings.
+// A RenderTarget with Mipmaps, of any format, regenerates its chain on the
+// GPU after each Frame.RenderTo and Update; see mipgen_target.go. ReadPixels
+// returns level 0 regardless of the sampler's mip or addressing settings.
 //
 // # Threading
 //

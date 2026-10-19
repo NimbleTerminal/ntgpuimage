@@ -14,7 +14,8 @@ import (
 // A partial chain is allowed; the sampler clamps to its last level. All bytes,
 // including coverage-adjusted alpha, are uploaded unchanged. SRGB describes
 // how the supplied RGB bytes are encoded; no generation or conversion occurs.
-// Mipmaps must be false. Use UpdateLevels to replace this chain.
+// Mipmaps must be false. Use UpdateLevels to replace this chain. With
+// RenderTarget, Frame.RenderTo regenerates every allocated level on the GPU.
 func (r *Renderer) UploadTextureLevels(levels []image.Image, opts TextureOptions) (*Texture, error) {
 	const op = "upload texture levels"
 	if r.closed.Load() {
@@ -37,9 +38,6 @@ func (r *Renderer) UploadTextureLevels(levels []image.Image, opts TextureOptions
 	if err != nil {
 		return nil, err
 	}
-	if len(levels) > 1 && opts.RenderTarget {
-		return nil, &Error{Op: op, Err: errors.New("mipmapped render targets are not yet supported")}
-	}
 	if err := r.checkTextureSize(op, w, h); err != nil {
 		return nil, err
 	}
@@ -49,7 +47,9 @@ func (r *Renderer) UploadTextureLevels(levels []image.Image, opts TextureOptions
 // UpdateLevels replaces every allocated level without reallocating the texture
 // or bind group. The count and dimensions must match the original chain.
 // Pixels are copied before returning. No alpha or color-space conversion is
-// applied to the packed NRGBA bytes. This also accepts a MipChain result.
+// applied to the packed NRGBA bytes. This also accepts a MipChain result. On
+// a mipmapped render target the supplied levels stay until the next RenderTo
+// or Update regenerates the chain.
 func (t *Texture) UpdateLevels(levels []image.Image) error {
 	const op = "update texture levels"
 	if t.r.closed.Load() {
@@ -68,17 +68,21 @@ func (t *Texture) UpdateLevels(levels []image.Image) error {
 	if w != t.width || h != t.height {
 		return &Error{Op: op, Err: fmt.Errorf("size %dx%d differs from %dx%d", w, h, t.width, t.height)}
 	}
-	return t.updatePackedLevels(packLevels(levels))
+	return t.updatePackedLevels(packLevels(levels), false)
 }
 
-func (t *Texture) updatePackedLevels(pixels [][]byte) error {
+// updatePackedLevels writes the packed levels and, when regenerate is set,
+// fills the rest of the chain from level 0 on the GPU.
+func (t *Texture) updatePackedLevels(pixels [][]byte, regenerate bool) error {
 	var err error
 	if runErr := t.r.exec.run(context.Background(), func() {
 		if t.closed || t.r.device == nil {
 			err = ErrClosed
 			return
 		}
-		err = t.writeLevels(pixels)
+		if err = t.writeLevels(pixels); err == nil && regenerate {
+			err = t.regenerateMips()
+		}
 	}); runErr != nil {
 		return runErr
 	}

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Mipmapped render targets
+
+- `TextureOptions.Mipmaps` now works with `RenderTarget`, including `SRGB`,
+  `Float16`, and `Depth`. After each `Frame.RenderTo`, and after `Update`,
+  every lower level is regenerated on the GPU in the same submission: one
+  bilinear tap per texel at the destination texel centers, which is the 2×2
+  box average for even sizes. `SRGB` targets average in linear light.
+  Generated levels stay within 2/255 per channel of `MipChain` over a 64×32
+  chain on Metal, Chrome, and Vulkan.
+- `UploadTextureLevels` accepts `RenderTarget` with more than one level;
+  `RenderTo` then regenerates the supplied chain. `UpdateLevels` uploads
+  supplied levels unchanged until the next `RenderTo` or `Update`.
+- Depth attachments keep one level. `ReadPixels` still returns level 0.
+- A mipmapped render target can be drawn into once per frame; a second
+  `RenderTo` in the same frame returns an error before its callback runs.
+- Because gogpu v0.34.5 reports every texture view at the base texture's
+  size, levels are drawn into persistent per-level scratch targets and copied
+  into place. The scratch targets hold about a third of level 0. When
+  upstream sizes views by `BaseMipLevel`, the copies can go.
+- Checked with `task ci`, on Metal (Apple M5 Max), in Chrome, and on Vulkan
+  (NVIDIA GB10) under the validation layer.
+
 ### Mip generation performance
 
 - `MipChain`, and automatic mipmaps on upload and `Update`, reduce each level

@@ -51,8 +51,11 @@ type Frame struct {
 // recorded afterwards, so the rest of this frame, and any later frame, can
 // sample t. t must have been created with TextureOptions.RenderTarget.
 //
-// RenderTo cannot be nested, and the nested Frame is cleared when draw
-// returns. An error from draw fails the whole frame even if the caller does
+// For a texture created with Mipmaps, RenderTo then regenerates every lower
+// level from level 0 on the GPU, inside the same frame; see
+// mipgen_target.go for the filter. Such a texture can be drawn into once
+// per frame. RenderTo cannot be nested, and the nested Frame is cleared
+// when draw returns. An error from draw fails the whole frame even if the caller does
 // not return it, because the texture pass may be half recorded. Errors
 // reported before draw runs leave the frame usable.
 func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
@@ -72,6 +75,9 @@ func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
 	if !t.renderTarget {
 		return &Error{Op: op, Err: errors.New("texture was not created with RenderTarget")}
 	}
+	if t.generatesMips() && t.mipFrame == f.Seq {
+		return &Error{Op: op, Err: errors.New("a mipmapped render target can be drawn into once per frame")}
+	}
 	// On Vulkan a pass leaves an attachment that also has TextureBinding
 	// usage in the GENERAL layout, and a pass with LoadOp Load expects to
 	// find it there, while sampling needs SHADER_READ_ONLY. gogpu's usage
@@ -82,9 +88,17 @@ func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
 	if t.written {
 		transition(f.Encoder, t.texture, gputypes.TextureUsageTextureBinding, generalLayout)
 	}
-	sub := &Frame{Device: f.Device, Encoder: f.Encoder, Color: t.view, Depth: t.depthView, Width: t.width, Height: t.height, Seq: f.Seq, r: f.r, nested: true}
+	sub := &Frame{Device: f.Device, Encoder: f.Encoder, Color: t.colorView, Depth: t.depthView, Width: t.width, Height: t.height, Seq: f.Seq, r: f.r, nested: true}
 	err := draw(sub)
 	*sub = Frame{}
+	if err == nil {
+		transition(f.Encoder, t.texture, generalLayout, gputypes.TextureUsageTextureBinding)
+		if t.generatesMips() {
+			// Level 0 is in the sampled layout now; fill the rest of the
+			// chain before anything later in this frame samples it.
+			err = t.generateMips(f.Encoder)
+		}
+	}
 	if err != nil {
 		// The pass may be half recorded, so the frame cannot be submitted
 		// even if the caller ignores this error.
@@ -94,8 +108,7 @@ func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
 		}
 		return err
 	}
-	transition(f.Encoder, t.texture, generalLayout, gputypes.TextureUsageTextureBinding)
-	t.written, t.drawn = true, true
+	t.written, t.drawn, t.mipFrame = true, true, f.Seq
 	return nil
 }
 
@@ -137,8 +150,12 @@ type Renderer struct {
 	target        target
 	sampledLayout *wgpu.BindGroupLayout
 	blit          map[gputypes.TextureFormat]*wgpu.RenderPipeline // readback of drawn textures by scratch format, created on first use
-	blitLayout    *wgpu.PipelineLayout
+	blitLayout    *wgpu.PipelineLayout                            // sampled-image-only layout, shared with mip generation
 	blitModule    *wgpu.ShaderModule
+	mips          map[gputypes.TextureFormat]*wgpu.RenderPipeline // render-target mip generation by format, created on first use
+	mipModule     *wgpu.ShaderModule
+	mipSampler    *wgpu.Sampler
+	mipSink       *wgpu.Buffer // one padded row; see mipgen_target.go
 	textures      map[*Texture]struct{}
 
 	seq    uint64
@@ -343,6 +360,22 @@ func (r *Renderer) releaseAll() {
 		p.Release()
 	}
 	clear(r.blit)
+	for _, p := range r.mips {
+		p.Release()
+	}
+	clear(r.mips)
+	if r.mipModule != nil {
+		r.mipModule.Release()
+		r.mipModule = nil
+	}
+	if r.mipSampler != nil {
+		r.mipSampler.Release()
+		r.mipSampler = nil
+	}
+	if r.mipSink != nil {
+		r.mipSink.Release()
+		r.mipSink = nil
+	}
 	if r.blitLayout != nil {
 		r.blitLayout.Release()
 		r.blitLayout = nil

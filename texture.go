@@ -30,6 +30,19 @@ type Texture struct {
 	depthView     *wgpu.TextureView // nil unless TextureOptions.Depth
 	width, height int
 	renderTarget  bool
+	// colorView is the view RenderTo attaches: level 0 alone for a mipmapped
+	// render target, otherwise view.
+	colorView *wgpu.TextureView
+	// The fields below exist only for a mipmapped render target; see
+	// mipgen_target.go. levelGroups sample one level each through the
+	// renderer's mip sampler; mipScratch holds the target each level is
+	// drawn into before it is copied; mipFrame is the last frame that
+	// regenerated the chain.
+	levelViews      []*wgpu.TextureView
+	levelGroups     []*wgpu.BindGroup
+	mipScratch      []*wgpu.Texture
+	mipScratchViews []*wgpu.TextureView
+	mipFrame        uint64
 
 	// The fields below are accessed only on the renderer executor.
 	closed bool
@@ -57,10 +70,13 @@ type TextureOptions struct {
 	// Zero selects ClampToEdge on each axis independently.
 	AddressModeU gputypes.AddressMode
 	AddressModeV gputypes.AddressMode
-	// Mipmaps allocates the full mip chain for an uploaded or updated image.
-	// It currently excludes RenderTarget and Float16. UploadTexture and Update
-	// generate it on the CPU using MipChain. Linear Filter blends mip levels
-	// (trilinear filtering); nearest Filter selects the nearest level.
+	// Mipmaps allocates the full mip chain. UploadTexture and Update generate
+	// it on the CPU using MipChain. For a RenderTarget, including Float16,
+	// every Frame.RenderTo and Update instead regenerates the chain on the
+	// GPU from level 0 with a bilinear 2×2 reduction in the texture's color
+	// space; see mipgen_target.go. A Depth attachment keeps one level.
+	// Linear Filter blends mip levels (trilinear filtering); nearest Filter
+	// selects the nearest level.
 	Mipmaps bool
 	// MipAlphaWeighted enables alpha-weighted RGB when generating mipmaps.
 	// It does not preserve alpha-test coverage; supply adjusted levels for cutouts.
@@ -101,9 +117,6 @@ func (o TextureOptions) validate(op string) error {
 		if mode != 0 && mode != gputypes.AddressModeClampToEdge && mode != gputypes.AddressModeRepeat && mode != gputypes.AddressModeMirrorRepeat {
 			return &Error{Op: op, Err: fmt.Errorf("invalid address mode %v", mode)}
 		}
-	}
-	if o.Mipmaps && o.RenderTarget {
-		return &Error{Op: op, Err: errors.New("mipmapped render targets are not yet supported")}
 	}
 	if o.Depth && !o.RenderTarget {
 		return &Error{Op: op, Err: errors.New("Depth requires RenderTarget")}
@@ -293,6 +306,13 @@ func (r *Renderer) allocateTexture(pixels [][]byte, w, h int, filter gputypes.Fi
 	if err != nil {
 		return nil, &Error{Op: "create sampled texture view", Err: err}
 	}
+	t.colorView = t.view
+	if t.generatesMips() {
+		if err = t.allocateMipTargets(); err != nil {
+			return nil, err
+		}
+		t.colorView = t.levelViews[0]
+	}
 	if opts.Depth {
 		t.depthTex, err = r.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label:         r.label + ":sampled-image-depth",
@@ -380,7 +400,8 @@ func (t *Texture) BindGroup() *wgpu.BindGroup             { return t.group }
 
 // Update replaces all pixels without changing the texture or its bind group.
 // Image dimensions must match the original upload. Automatic mip chains are
-// regenerated; caller-supplied multi-level chains require UpdateLevels.
+// regenerated, on the CPU for an uploaded texture and on the GPU for a
+// RenderTarget; caller-supplied multi-level chains require UpdateLevels.
 func (t *Texture) Update(src image.Image) error {
 	if t.r.closed.Load() {
 		return ErrClosed
@@ -398,11 +419,12 @@ func (t *Texture) Update(src image.Image) error {
 	if w != t.width || h != t.height {
 		return &Error{Op: "update texture", Err: fmt.Errorf("size %dx%d differs from %dx%d", w, h, t.width, t.height)}
 	}
-	pixels, err := uploadPixels(src, t.autoMips, t.mipOptions)
+	gpuMips := t.generatesMips()
+	pixels, err := uploadPixels(src, t.autoMips && !gpuMips, t.mipOptions)
 	if err != nil {
 		return err
 	}
-	return t.updatePackedLevels(pixels)
+	return t.updatePackedLevels(pixels, gpuMips)
 }
 
 // ReadPixels returns a fresh, tightly packed NRGBA copy of this texture: the
@@ -456,7 +478,7 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 		return nil, &Error{Op: "create encoder", Err: err}
 	}
 	if t.drawn {
-		return t.readPixelsByBlit(ctx, enc, staging, stride)
+		return t.readByBlit(ctx, enc, staging, stride, t.group, t.width, t.height)
 	}
 	// A sampled texture rests in the TextureBinding state: gogpu leaves it
 	// there after every write and does not track sampling. The copy needs
@@ -476,7 +498,8 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 	return img, nil
 }
 
-// readPixelsByBlit reads back a texture that has been drawn into. Once a
+// readByBlit reads back w×h texels of the level that group binds, from a
+// texture that has been drawn into; level 0 of the full view by default. Once a
 // texture has been a render attachment, gogpu's usage tracker records that
 // usage and, before any later submission that copies from the texture,
 // records its own barrier from the attachment layout. On Vulkan the texture
@@ -495,7 +518,7 @@ func (t *Texture) readPixels(ctx context.Context) (*image.NRGBA, error) {
 // formats only on Vulkan: Metal never sets PixelFormatView and DX12
 // creates the texture with a fully typed format. A Float16 texture is
 // converted to RGBA8Unorm by the write.
-func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder, staging *wgpu.Buffer, stride int) (_ *image.NRGBA, err error) {
+func (t *Texture) readByBlit(ctx context.Context, enc *wgpu.CommandEncoder, staging *wgpu.Buffer, stride int, group *wgpu.BindGroup, w, h int) (_ *image.NRGBA, err error) {
 	r := t.r
 	format := gputypes.TextureFormatRGBA8Unorm
 	if t.format == gputypes.TextureFormatRGBA8UnormSrgb {
@@ -508,7 +531,7 @@ func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder
 	}
 	scratch, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:         r.label + ":texture-readback-scratch",
-		Size:          wgpu.Extent3D{Width: uint32(t.width), Height: uint32(t.height), DepthOrArrayLayers: 1},
+		Size:          wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1},
 		MipLevelCount: 1,
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
@@ -535,19 +558,19 @@ func (t *Texture) readPixelsByBlit(ctx context.Context, enc *wgpu.CommandEncoder
 		return nil, &Error{Op: "begin texture readback blit", Err: err}
 	}
 	pass.SetPipeline(blit)
-	pass.SetBindGroup(0, t.group, nil)
+	pass.SetBindGroup(0, group, nil)
 	pass.Draw(gputypes.DrawArgs{VertexCount: 6, InstanceCount: 1})
 	if err := pass.End(); err != nil {
 		enc.DiscardEncoding()
 		return nil, &Error{Op: "end texture readback blit", Err: err}
 	}
 	transition(enc, scratch, gputypes.TextureUsageRenderAttachment, gputypes.TextureUsageCopySrc)
-	encodeReadback(enc, scratch, staging, t.width, t.height, stride)
+	encodeReadback(enc, scratch, staging, w, h, stride)
 	cmd, err := r.submit(enc)
 	if err != nil {
 		return nil, err
 	}
-	img, _, _, err := mapImage(ctx, r.device, staging, t.width, t.height, stride)
+	img, _, _, err := mapImage(ctx, r.device, staging, w, h, stride)
 	if err != nil {
 		return nil, err
 	}
@@ -595,16 +618,13 @@ func (r *Renderer) blitPipeline(format gputypes.TextureFormat) (*wgpu.RenderPipe
 		}
 		r.blitModule = module
 	}
-	if r.blitLayout == nil {
-		layout, err := r.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{Label: r.label + ":readback-blit", BindGroupLayouts: []*wgpu.BindGroupLayout{r.sampledLayout}})
-		if err != nil {
-			return nil, &Error{Op: "create readback blit layout", Err: err}
-		}
-		r.blitLayout = layout
+	layout, err := r.sampledPipelineLayout()
+	if err != nil {
+		return nil, err
 	}
 	pipeline, err := r.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:       r.label + ":readback-blit",
-		Layout:      r.blitLayout,
+		Layout:      layout,
 		Vertex:      wgpu.VertexState{Module: r.blitModule, EntryPoint: "vs_main"},
 		Fragment:    &wgpu.FragmentState{Module: r.blitModule, EntryPoint: "fs_main", Targets: []gputypes.ColorTargetState{{Format: format, WriteMask: gputypes.ColorWriteMaskAll}}},
 		Primitive:   gputypes.PrimitiveState{Topology: gputypes.PrimitiveTopologyTriangleList, CullMode: gputypes.CullModeNone},
@@ -638,6 +658,7 @@ func (t *Texture) release() {
 	if t.closed {
 		return
 	}
+	t.releaseMipTargets()
 	if t.group != nil {
 		t.group.Release()
 	}
@@ -656,6 +677,6 @@ func (t *Texture) release() {
 	if t.depthTex != nil {
 		t.depthTex.Release()
 	}
-	t.group, t.sampler, t.view, t.texture, t.depthView, t.depthTex = nil, nil, nil, nil, nil, nil
+	t.group, t.sampler, t.view, t.colorView, t.texture, t.depthView, t.depthTex = nil, nil, nil, nil, nil, nil, nil
 	t.closed = true
 }

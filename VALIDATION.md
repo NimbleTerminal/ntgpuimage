@@ -183,10 +183,55 @@ same mip chain is used with anisotropy off and at 16x:
 The test requires a contrast increase rather than exact pixels because
 anisotropic sampling quality varies by implementation.
 
-Render-target mip generation is excluded. In the pinned Vulkan backend,
-`CreateTextureView` stores the base texture dimensions without reducing them by
-`BaseMipLevel`, so rendering to smaller mip views needs an upstream fix and
-separate validation of subresource transitions.
+Render-target mip generation was excluded here; see the next section.
+
+### Mipmapped render targets
+
+Run on 2026-10-18 with the pinned wgpu v0.34.5. `TextureOptions.Mipmaps`
+with `RenderTarget` regenerates the chain on the GPU after each
+`Frame.RenderTo` and `Update`; `mipgen_target.go` describes the filter.
+
+- `TestRenderTargetMipLevelsMatchMipChain` draws a ramp/checker/alpha pattern
+  into 64×32 plain, sRGB, sRGB+depth, and Float16+depth targets and compares
+  every generated level with `MipChain` of the level-0 readback. The largest
+  per-channel difference over the six generated levels was 2/255 for the
+  8-bit targets (alpha on Metal and Chrome; alpha and blue on Vulkan) and
+  1/255 for Float16, on Metal (Apple M5 Max), in Chrome WebGPU, and on Vulkan
+  (NVIDIA GB10); the test asserts 2/255.
+- A 97×61 target produces seven levels down to 1×1 with a solid fill exact at
+  every level. A minified sample over a one-texel checker resolves to the
+  chain average for plain and sRGB targets, so the sampler reaches the
+  generated levels. `Update` regenerates on the GPU, `UpdateLevels` keeps the
+  supplied levels until the next pass, a supplied chain with `RenderTarget`
+  regenerates on `RenderTo`, a failed callback leaves the renderer usable, and
+  a second `RenderTo` into the same target in one frame is rejected before its
+  callback runs.
+- `task ci` passes. The full native suite passes on Metal (with the existing
+  `TestDerivedUVShader` skip) and in Chrome. `task test-vulkan-remote` passes
+  on the NVIDIA GB10 under the Khronos validation layer with zero validation
+  errors.
+
+Two defects in gogpu v0.34.5 shaped the implementation, both found under the
+validation layer:
+
+- Every texture view reports the base texture's size. The Vulkan backend
+  sizes a pass's framebuffer from the first color attachment's view, and the
+  core layer compares attachment sizes the same way, so a mip view cannot be
+  a correct render attachment (`VUID-VkFramebufferCreateInfo-flags-04533`
+  would follow on Vulkan; the core layer rejects a second attachment of the
+  real size). Each level is instead drawn into a one-level scratch target of
+  its own size and copied into the mip level with explicit per-level layout
+  transitions.
+- The submit-time usage tracker records one usage per texture per submission
+  and records a whole-texture barrier from the held usage to the new one
+  unless both are the same hardware-ordered usage. Ending a frame with the
+  level copies left the texture held at copy destination, which is not
+  ordered, so every later generating frame began with a
+  `TRANSFER_DST_OPTIMAL` to `TRANSFER_DST_OPTIMAL` barrier on a texture
+  resting in `SHADER_READ_ONLY_OPTIMAL`, and `VUID-vkCmdDraw-None-09600` was
+  reported for every level. Each generation now ends with a one-texel copy
+  from the last level into a 256-byte sink buffer: copy source is ordered,
+  so later frames merge without a barrier.
 
 ### Mip generation fast paths
 
