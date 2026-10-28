@@ -70,6 +70,26 @@ go run ./examples/texture -out texture.png  # upload, sample, update, read back
 go run ./examples/twopass -out twopass.png  # render into a texture, then sample it
 ```
 
+The interactive browser showcase uses the same two-pass Go renderer. It shows
+the intermediate texture and final frame side by side, with controls for ring
+frequency, tiling, and texture resolution, plus a PNG download:
+
+```sh
+task serve-site  # open http://localhost:8080
+```
+
+This requires Go, Task, Python 3, and a browser with WebGPU support. To build
+without Task or Python, run `sh scripts/build-site.sh` and serve `bin/site/`
+with a static HTTP server. Use localhost or HTTPS for WebGPU. All rendering,
+pixel readback, and PNG encoding happen locally through Go/WASM; no server
+processing is needed. The elapsed time shown includes rendering, both pixel
+readbacks, PNG encoding, and browser image decoding.
+
+The [Pages workflow](.github/workflows/pages.yml) builds the website on pull
+requests and deploys pushes to `main`. Enable **Settings → Pages → Source →
+GitHub Actions** in the repository before the first deployment. Assets use
+relative paths so the site also works under the repository's Pages subpath.
+
 ## API
 
 | Call | Purpose |
@@ -345,7 +365,9 @@ With [Task](https://taskfile.dev) installed, `task list` shows every task.
 | `task validate` | `ci`, `test-gpu`, and `test-browser` | All of the above |
 | `task test-vulkan` | The full suite on Vulkan under the validation layer | Linux with Vulkan |
 | `task test-vulkan-remote HOST=name` | Copies the tree to `name` over ssh and runs `test-vulkan` there | ssh access |
-| `task run-examples` | Both examples, writing PNG files to `bin/` | A GPU |
+| `task run-examples` | All three examples, writing PNG files to `bin/` | A GPU |
+| `task build-site` | Build the interactive browser demo into `bin/site/` | Nothing |
+| `task serve-site` | Build and serve the browser demo on localhost:8080 | Python 3; browser WebGPU to render |
 
 The same commands without Task:
 

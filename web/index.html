@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Explore two-pass GPU rendering in Go: draw a procedural texture, sample it into an image, and download the pixels. Powered by ntgpuimage and WebGPU.">
+  <meta name="theme-color" content="#111714">
+  <title>ntgpuimage — Two passes. One image.</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./wasm_exec.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="./"><span class="mark" aria-hidden="true">▧</span> ntgpuimage</a>
+    <a href="https://github.com/NimbleTerminal/ntgpuimage">Source on GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="title">
+      <p class="eyebrow">GO → WEBASSEMBLY → WEBGPU</p>
+      <h1 id="title">Two passes. <span>One image.</span></h1>
+      <p class="lede">Paint a texture. Sample it into a frame. Get the pixels back.<br>Explore offscreen GPU rendering in Go, right in your browser.</p>
+    </section>
+    <section class="playground" aria-label="Interactive two-pass renderer">
+      <div class="lab-header"><span class="eyebrow">THE TWO-PASS LAB</span><span id="state" class="state" role="status">Loading Go runtime…</span></div>
+      <div id="error" class="error" role="alert" hidden></div>
+      <noscript><p class="error">Enable JavaScript to run the WebGPU demo.</p></noscript>
+      <div class="previews" id="previews" aria-busy="true">
+        <figure>
+          <div class="figure-heading"><span><b>01</b> Generate texture</span><span id="texture-size">128 × 128</span></div>
+          <div class="image-wrap"><img id="texture" width="512" height="512" alt="Intermediate texture: colorful concentric rings over a green and blue gradient" hidden><span class="placeholder">Waiting for GPU</span></div>
+          <figcaption>A fragment shader paints rings into an offscreen texture.</figcaption>
+        </figure>
+        <figure>
+          <div class="figure-heading"><span><b>02</b> Sample &amp; read back</span><span>512 × 512</span></div>
+          <div class="image-wrap"><img id="final" width="512" height="512" alt="Final image: the generated ring texture repeated in a grid" hidden><span class="placeholder">Waiting for GPU</span></div>
+          <figcaption>A second pass tiles that texture into the final image.</figcaption>
+        </figure>
+      </div>
+      <form id="controls">
+        <fieldset disabled>
+          <legend class="sr-only">Rendering controls</legend>
+          <label for="frequency">Ring frequency <output id="frequency-value" for="frequency">60</output><input id="frequency" type="range" min="4" max="160" step="1" value="60"></label>
+          <label for="tiles">Tiles per axis <output id="tiles-value" for="tiles">2</output><input id="tiles" type="range" min="1" max="8" step="1" value="2"></label>
+          <label for="resolution">Texture resolution<select id="resolution"><option value="16">16 × 16</option><option value="32">32 × 32</option><option value="64">64 × 64</option><option value="128" selected>128 × 128</option><option value="256">256 × 256</option><option value="512">512 × 512</option></select></label>
+          <button type="reset" class="reset">Reset ↺</button>
+        </fieldset>
+      </form>
+      <div class="lab-footer"><p id="render-info">Rendered locally. Your GPU, your pixels.</p><a id="download" class="download" download="ntgpuimage-twopass.png" aria-disabled="true">Download PNG <span aria-hidden="true">↓</span></a></div>
+    </section>
+    <section class="explanation" aria-labelledby="how-title">
+      <div><p class="eyebrow">FROM SHADER TO GO IMAGE</p><h2 id="how-title">A texture takes the scenic route.</h2><p>Both passes run on the GPU in a single frame, with no pixel readback between them. Afterward, ntgpuimage reads back the final frame and the intermediate texture as Go images. Go encodes the PNGs you see above—and the one you download.</p><p>Try a small texture and more tiles to see what resolution does to the rings. The final frame stays at 512 × 512.</p></div>
+      <div class="code-panel"><div>THE SHARED GO RENDERER</div><pre><code>img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
+    if err := f.RenderTo(texture, drawPattern); err != nil {
+        return err
+    }
+    return drawTiledTexture(f)
+})</code></pre><a href="https://github.com/NimbleTerminal/ntgpuimage/blob/main/internal/twopass/twopass.go">Explore the full example ↗</a></div>
+    </section>
+  </main>
+  <footer><span>ntgpuimage / NimbleTerminal</span><span>Go images. GPU powered.</span></footer>
+</body>
+</html>

@@ -34,6 +34,7 @@ tasks:
       - build-examples
       - build-browsertest
       - build-wasm
+      - build-site
 
   clean:
     desc: 'Clean built binaries and example output'
@@ -60,6 +61,18 @@ tasks:
     desc: 'Compile every package for GOOS=js GOARCH=wasm'
     cmds:
       - GOOS=js GOARCH=wasm go build ./...
+
+  build-site:
+    desc: 'Build the interactive GitHub Pages demo into bin/site/'
+    cmds:
+      - sh scripts/build-site.sh
+
+  serve-site:
+    desc: 'Build and preview the website at http://localhost:8080'
+    deps:
+      - build-site
+    cmds:
+      - python3 -m http.server 8080 --bind 127.0.0.1 --directory bin/site
 
   test-wasm:
     desc: 'Run helper tests under Node, which has no WebGPU'

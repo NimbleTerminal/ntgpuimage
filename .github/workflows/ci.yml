@@ -18,5 +18,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '26'
+      - name: Browser demo JavaScript syntax
+        run: node --check web/app.js
       - name: WASM helper tests
         run: GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" .
