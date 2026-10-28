@@ -1,5 +1,25 @@
 # Changelog
 
+## `0.5.0` — 2026-10-28
+
+### Interactive browser showcase
+
+- Two-pass WebGPU demo in Go/WASM, with side-by-side previews of the
+  intermediate texture and final frame.
+- Controls for ring frequency, tiling, and texture resolution, plus a PNG
+  download encoded by Go from the rendered pixels.
+- Native and browser examples share the same two-pass renderer.
+- `task build-site` builds the static website; `task serve-site` previews it
+  locally. GitHub Actions builds pull requests and deploys `main` to Pages.
+
+### Dependencies
+
+- Minimum Go version is now 1.26.0.
+- Updated goffi to v0.6.7, naga to v0.20.3, and x/sys to v0.49.0.
+
+Checked with native race tests, native and WASM vet, WASM builds and helper
+tests, and the interactive WebGPU demo and PNG download in Chrome.
+
 ## `0.4.0` — 2026-10-19
 
 ### Mipmapped render targets
