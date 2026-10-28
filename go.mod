@@ -1,6 +1,6 @@
 module nimbleterminal.dev/ntgpuimage
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/gogpu/gputypes v0.8.0
@@ -8,9 +8,9 @@ require (
 )
 
 require (
-	github.com/go-webgpu/goffi v0.6.3 // indirect
+	github.com/go-webgpu/goffi v0.6.7 // indirect
 	github.com/go-webgpu/webgpu v0.5.5 // indirect
 	github.com/gogpu/gpucontext v0.31.3 // indirect
-	github.com/gogpu/naga v0.19.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	github.com/gogpu/naga v0.20.3 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
