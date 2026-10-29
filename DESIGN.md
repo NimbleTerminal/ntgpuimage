@@ -111,7 +111,7 @@ pixmap, and pass it to `UploadTexture` or `Texture.Update`.
 | `Device.FreeCommandBuffer` | Called after the GPU has finished. `Submit` now recycles encoders itself, so the call looks redundant on Metal, Vulkan, GLES, and software. DX12 was not verified, so it stays. After a cancelled or failed wait it is skipped, since the GPU may still be using the buffer. |
 | `Buffer.Map` | Not used. It polls from a second goroutine and has no browser pump. |
 | `HeadlessSurfaceTarget`, `Surface.ReadPixels` | Not used. Software backend only. |
-| `gpucontext.DeviceProvider` | Not implemented. See the device-sharing proposal below. |
+| `gpucontext.DeviceProvider` | Accepted by `NewFromProvider`; host threading rules remain the caller's responsibility. |
 | gogpu and gg helpers | Not importable, or incompatible in format, alpha, and wgpu version. |
 
 ## Scope
@@ -131,49 +131,34 @@ The library provides:
 - Adapter information and errors that callers can inspect.
 
 It does not provide a scene engine, chart types, SVG parsing, an atlas
-manager, render-target mipmaps, MSAA, arbitrary texture formats, or wrappers around WebGPU types.
+manager, MSAA, arbitrary texture formats, or wrappers around WebGPU types.
 
 ## Accepting an externally owned device
 
-The library currently creates its own device. Sharing a device would need
-a host that controls GPU execution and resource lifetime. The following
-API is a proposal, not an implemented feature.
+`NewFromDevice(dev, opts)` and `NewFromProvider(provider, opts)` borrow a
+host-owned wgpu device. The renderer releases only resources it creates;
+the host keeps its device alive until the renderer is closed and its GPU
+work has finished. Provider handles must originate from wgpu.
 
-**Shape.** `NewWithDevice(ctx, device, run, opts)`, where `run` executes a
-function on the host's GPU thread and returns after it completes.
+Borrowed renderers start no goroutine. A cancellable serialization lock runs
+work, callbacks, and releases directly on the caller's goroutine. The host
+is responsible for calling on its GPU thread and coordinating other device
+users. Adapter-selection options are ignored. The owning `New` constructor
+continues using a dedicated OS-thread executor.
 
-**Ownership.**
+Zero dimensions defer the main target until `Resize`. Texture uploads and
+`RenderTexture` work without that target. `RenderTexture` reuses `Frame.RenderTo`
+and its mip-generation and layout transitions, leaving encoder submission to
+the host. Successful recordings must be submitted in order before subsequent
+texture use. Abandoning them requires recreating affected textures because
+layout tracking assumes execution. A mipmapped texture is drawn at most once
+per encoder, and resources must remain alive until the GPU is finished.
 
-- The host owns the instance, adapter, and device. The renderer never
-  releases them.
-- The renderer owns what it creates: the target, staging buffer, sampled
-  layout, and textures. `Close` releases only those.
-- `Options.Backends`, `PowerPreference`, and `ForceFallback` do not apply
-  and are rejected if set.
-
-**Executor and threading.**
-
-- The renderer starts no goroutine. Every GPU call, including `Do`, draw
-  callbacks, and releases, goes through the host's `run`.
-- `run` must serialize jobs. Calling renderer methods from inside a job
-  remains an error, as it is today.
-- A `gpucontext.DeviceProvider` alone is not enough, because that interface
-  carries no threading rule. It may supply the device handle, but `run` is
-  still required.
-
-**Shutdown.**
-
-- The host calls `Close` before it releases the device and before it stops
-  its executor.
-- If `run` reports that the executor has stopped, `Close` returns
-  `ErrClosed` and releases nothing, because releasing off-thread is not
-  safe. The host's device release then reclaims the objects.
-- Device loss returns errors from `Render`. The renderer does not
-  recreate a device it does not own.
-
-The reverse direction, implementing `DeviceProvider` on `Renderer`, is also
-deferred. It would hand the device to code that calls it from arbitrary
-goroutines, which bypasses the executor.
+Readback shares the same map/wait path for whole images, reusable images,
+color rectangles, and Depth32Float picking. Color regions use a region-sized
+staging allocation. WebGPU requires depth copies to cover the full subresource;
+`ReadDepth` maps that copy and extracts one float without allocating a full Go
+image. Default depth remains Depth24Plus.
 
 ## Possible upstream improvements
 

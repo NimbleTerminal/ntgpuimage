@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Borrow host devices with `NewFromDevice` or `NewFromProvider`; calls execute
+  on the caller's goroutine and `Close` preserves the host device.
+- Zero initial dimensions defer main-target allocation until `Resize`.
+- `RenderTexture` records texture drawing and mip generation in a host encoder.
+- `ReadRegion`, `ReadPixelsInto`, and `ReadDepth` share cancellable readback.
+  `Options.DepthFormat` supports Depth32Float alongside the default Depth24Plus.
 - Updated naga to v0.20.4.
 
 ## `0.5.0` — 2026-10-28

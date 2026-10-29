@@ -27,7 +27,7 @@
 //
 // # Threading
 //
-// A Renderer owns one goroutine pinned to an OS thread. Every GPU call —
+// A Renderer created with New owns one goroutine pinned to an OS thread. Every GPU call —
 // device creation, target allocation, the caller's draw callback, the
 // copy, the map, and all releases — runs on that goroutine. Use Renderer.Do
 // to run pipeline and buffer setup on it, and Frame.Device inside a draw
@@ -39,6 +39,14 @@
 // that submitted the work, and gives thread-bound backends such as GLES a
 // stable thread. Code that receives the device must not retain it for use
 // on other goroutines.
+//
+// NewFromDevice and NewFromProvider instead borrow a host-owned device and
+// serialize calls on the caller's goroutine. The host enforces thread affinity,
+// submission ordering, and device lifetime. Close releases only renderer-created
+// resources. Zero initial dimensions defer the main target until Resize.
+// RenderTexture records texture passes in a host-owned encoder without submission.
+// ReadRegion reads color rectangles, ReadPixelsInto reuses caller storage, and
+// ReadDepth reads a stored depth value when Options.DepthFormat is Depth32Float.
 //
 // # Render targets
 //
@@ -56,7 +64,7 @@
 // any Go goroutine except one that is itself running inside a JS callback
 // (that would deadlock the event loop). Start rendering from a Go goroutine.
 //
-// When attaching Frame.Depth (a depth-only Depth24Plus view) to a render
+// When attaching Frame.Depth (a depth-only Depth24Plus or Depth32Float view) to a render
 // pass, set StencilReadOnly: true on the RenderPassDepthStencilAttachment.
 // gogpu's browser backend otherwise emits stencilLoadOp/stencilStoreOp,
 // which WebGPU rejects for a format with no stencil aspect; native backends

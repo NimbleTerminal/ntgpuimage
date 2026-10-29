@@ -30,6 +30,9 @@ type Texture struct {
 	depthView     *wgpu.TextureView // nil unless TextureOptions.Depth
 	width, height int
 	renderTarget  bool
+
+	externalEncoder *wgpu.CommandEncoder // last host encoder used for mip generation
+
 	// colorView is the view RenderTo attaches: level 0 alone for a mipmapped
 	// render target, otherwise view.
 	colorView *wgpu.TextureView

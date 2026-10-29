@@ -8,15 +8,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogpu/gpucontext"
 	"github.com/gogpu/gputypes"
 	"github.com/gogpu/wgpu"
 )
 
 // Options configures a Renderer at construction.
 type Options struct {
-	Width, Height int    // initial target size in pixels; both must be > 0
-	Depth         bool   // allocate a Depth24Plus attachment alongside the color target
-	Label         string // optional prefix for GPU object labels
+	Width, Height int  // initial target size in pixels; both positive, or both zero to defer allocation
+	Depth         bool // enable depth; defaults to Depth24Plus unless DepthFormat is set
+	// DepthFormat optionally enables depth with Depth24Plus or Depth32Float.
+	// Depth32Float permits ReadDepth. Zero uses Depth24Plus when Depth is true.
+	DepthFormat gputypes.TextureFormat
+	Label       string // optional prefix for GPU object labels
 
 	// Backends restricts native backend selection. Zero means all.
 	Backends gputypes.Backends
@@ -35,7 +39,7 @@ type Frame struct {
 	Device  *wgpu.Device // the renderer's device, for queue writes and resource updates
 	Encoder *wgpu.CommandEncoder
 	Color   *wgpu.TextureView // RGBA8Unorm, RenderAttachment|CopySrc; inside RenderTo, the texture's Format
-	Depth   *wgpu.TextureView // nil unless Options.Depth
+	Depth   *wgpu.TextureView // nil unless depth is enabled
 	Width   int
 	Height  int
 	Seq     uint64 // frame sequence number, starting at 1
@@ -123,7 +127,7 @@ func (f *Frame) RenderTo(t *Texture, draw func(*Frame) error) error {
 // masks, and Metal and the browser ignore barriers altogether.
 const generalLayout = gputypes.TextureUsageStorageBinding | gputypes.TextureUsageTextureBinding
 
-// Stats reports where one Render spent its time.
+// Stats reports where a render or readback spent its time.
 type Stats struct {
 	Seq         uint64
 	Draw        time.Duration // the caller's draw callback
@@ -134,13 +138,15 @@ type Stats struct {
 	BytesPerRow int // padded staging row stride
 }
 
-// Renderer owns a GPU device and an offscreen render target, and reads
-// frames back as *image.NRGBA. All GPU work runs on an internal executor
-// goroutine pinned to one OS thread. Renderer is safe for concurrent use;
-// calls are serialized. Its methods must not be called from inside Do or a
-// draw callback, which already occupy the executor.
+// Renderer renders offscreen images and manages sampled textures. New owns its
+// device and runs work on a dedicated OS thread. NewFromDevice borrows a device
+// and runs serialized calls on the caller's goroutine. Host thread affinity and
+// synchronization with other device users remain the caller's responsibility.
+// Methods must not be called inside Do or draw callbacks; use Frame.RenderTo.
 type Renderer struct {
-	exec *executor
+	exec        *executor
+	borrowed    bool
+	depthFormat gputypes.TextureFormat
 
 	instance    *wgpu.Instance
 	adapter     *wgpu.Adapter
@@ -168,19 +174,70 @@ type Renderer struct {
 // New creates the instance, adapter, device, and an initial target of
 // opts.Width×opts.Height. Everything created so far is released on failure.
 func New(ctx context.Context, opts Options) (*Renderer, error) {
-	if opts.Width <= 0 || opts.Height <= 0 {
-		return nil, &Error{Op: "new", Err: fmt.Errorf("invalid size %dx%d", opts.Width, opts.Height)}
+	if err := validateOptions(opts); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r := &Renderer{exec: newExecutor(), label: opts.Label, depth: opts.Depth}
+	r := &Renderer{exec: newExecutor(), label: opts.Label, depth: opts.Depth || opts.DepthFormat != 0, depthFormat: opts.DepthFormat}
 	var err error
 	_ = r.exec.run(context.Background(), func() { err = r.init(opts) })
 	if err != nil {
 		_ = r.exec.run(context.Background(), r.releaseAll)
 		r.exec.stop()
 		return nil, err
+	}
+	return r, nil
+}
+
+func validateOptions(opts Options) error {
+	if opts.Width < 0 || opts.Height < 0 || (opts.Width == 0) != (opts.Height == 0) {
+		return &Error{Op: "new", Err: fmt.Errorf("invalid size %dx%d", opts.Width, opts.Height)}
+	}
+	switch opts.DepthFormat {
+	case 0, gputypes.TextureFormatDepth24Plus, gputypes.TextureFormatDepth32Float:
+	default:
+		return &Error{Op: "new", Err: errors.New("unsupported depth format")}
+	}
+	return nil
+}
+
+// NewFromDevice borrows dev without retaining or releasing it. Calls run on the
+// caller's goroutine; callers must obey the host's thread and queue rules and
+// keep dev alive until Close. Adapter-selection options are ignored. A zero
+// size defers main-target allocation until Resize. AdapterInfo is unavailable.
+func NewFromDevice(dev *wgpu.Device, opts Options) (*Renderer, error) {
+	if err := validateOptions(opts); err != nil {
+		return nil, err
+	}
+	if dev == nil {
+		return nil, &Error{Op: "new from device", Err: errors.New("nil device")}
+	}
+	r := &Renderer{exec: newDirectExecutor(), borrowed: true, device: dev,
+		limits: dev.Limits(), label: opts.Label, depth: opts.Depth || opts.DepthFormat != 0, depthFormat: opts.DepthFormat}
+	if opts.Width != 0 {
+		if err := r.allocate(opts.Width, opts.Height); err != nil {
+			r.releaseAll()
+			r.exec.stop()
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// NewFromProvider borrows the wgpu device exposed by provider. Its handles must
+// originate from wgpu. The same lifetime and threading rules as NewFromDevice apply.
+func NewFromProvider(provider gpucontext.DeviceProvider, opts Options) (*Renderer, error) {
+	if provider == nil {
+		return nil, &Error{Op: "new from provider", Err: errors.New("nil provider")}
+	}
+	r, err := NewFromDevice(wgpu.DeviceFromHandle(provider.Device()), opts)
+	if err != nil {
+		return nil, err
+	}
+	if adapter := wgpu.AdapterFromHandle(provider.Adapter()); adapter != nil {
+		r.adapterInfo = adapter.Info()
 	}
 	return r, nil
 }
@@ -210,6 +267,9 @@ func (r *Renderer) init(opts Options) error {
 	}
 	r.device = dev
 	r.limits = dev.Limits()
+	if opts.Width == 0 {
+		return nil
+	}
 	return r.allocate(opts.Width, opts.Height)
 }
 
@@ -307,14 +367,22 @@ func (r *Renderer) buildTarget(w, h int) (_ target, err error) {
 		return target{}, &Error{Op: "create color view", Err: err}
 	}
 	if r.depth {
+		format := r.depthFormat
+		if format == 0 {
+			format = gputypes.TextureFormatDepth24Plus
+		}
+		usage := gputypes.TextureUsageRenderAttachment
+		if format == gputypes.TextureFormatDepth32Float {
+			usage |= gputypes.TextureUsageCopySrc
+		}
 		t.depthTex, err = r.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label:         r.label + ":depth",
 			Size:          size,
 			MipLevelCount: 1,
 			SampleCount:   1,
 			Dimension:     gputypes.TextureDimension2D,
-			Format:        gputypes.TextureFormatDepth24Plus,
-			Usage:         gputypes.TextureUsageRenderAttachment,
+			Format:        format,
+			Usage:         usage,
 		})
 		if err != nil {
 			return target{}, &Error{Op: "create depth texture", Err: err}
@@ -393,7 +461,9 @@ func (r *Renderer) releaseAll() {
 	}
 	r.target.release()
 	if r.device != nil {
-		r.device.Release()
+		if !r.borrowed {
+			r.device.Release()
+		}
 		r.device = nil
 	}
 	if r.adapter != nil {
@@ -406,8 +476,8 @@ func (r *Renderer) releaseAll() {
 	}
 }
 
-// Do runs f on the executor thread with the device. Use it for pipeline,
-// shader, and buffer setup so those calls obey the single-thread rule.
+// Do runs f with the device under renderer serialization. New runs it on
+// the executor thread; borrowed renderers run it on the caller goroutine.
 func (r *Renderer) Do(f func(dev *wgpu.Device) error) error {
 	if r.closed.Load() {
 		return ErrClosed
@@ -435,7 +505,8 @@ func (r *Renderer) Size() (w, h int) {
 	return w, h
 }
 
-// Close releases every GPU object and stops the executor. Idempotent.
+// Close releases renderer-owned GPU objects and stops execution. A borrowed
+// device is never released. The host must finish external GPU work first. Idempotent.
 func (r *Renderer) Close() error {
 	if r.closed.Swap(true) {
 		return nil
@@ -484,7 +555,7 @@ func (r *Renderer) Render(ctx context.Context, draw func(*Frame) error) (*image.
 	if draw == nil {
 		return nil, Stats{}, &Error{Op: "draw", Err: fmt.Errorf("nil draw callback")}
 	}
-	return r.execute(ctx, draw, true)
+	return r.execute(ctx, draw, true, nil)
 }
 
 // RenderToTexture draws and submits without copying pixels to Go, for
@@ -499,7 +570,7 @@ func (r *Renderer) RenderToTexture(ctx context.Context, draw func(*Frame) error)
 	if draw == nil {
 		return Stats{}, &Error{Op: "draw", Err: fmt.Errorf("nil draw callback")}
 	}
-	_, st, err := r.execute(ctx, draw, false)
+	_, st, err := r.execute(ctx, draw, false, nil)
 	return st, err
 }
 
@@ -508,10 +579,10 @@ func (r *Renderer) RenderToTexture(ctx context.Context, draw func(*Frame) error)
 // submission. Concurrent callers read the most recently submitted frame. It
 // fails if nothing was drawn since New or the last Resize.
 func (r *Renderer) ReadPixels(ctx context.Context) (*image.NRGBA, Stats, error) {
-	return r.execute(ctx, nil, true)
+	return r.execute(ctx, nil, true, nil)
 }
 
-func (r *Renderer) execute(ctx context.Context, draw func(*Frame) error, readback bool) (*image.NRGBA, Stats, error) {
+func (r *Renderer) execute(ctx context.Context, draw func(*Frame) error, readback bool, dst *image.NRGBA) (*image.NRGBA, Stats, error) {
 	if r.closed.Load() {
 		return nil, Stats{}, ErrClosed
 	}
@@ -531,23 +602,31 @@ func (r *Renderer) execute(ctx context.Context, draw func(*Frame) error, readbac
 		if err = ctx.Err(); err != nil {
 			return
 		}
-		img, st, err = r.render(ctx, draw, readback)
+		img, st, err = r.render(ctx, draw, readback, dst)
 	}); runErr != nil {
 		return nil, Stats{}, runErr
 	}
 	return img, st, err
 }
 
-func (r *Renderer) render(ctx context.Context, draw func(*Frame) error, readback bool) (*image.NRGBA, Stats, error) {
+func (r *Renderer) render(ctx context.Context, draw func(*Frame) error, readback bool, dst *image.NRGBA) (*image.NRGBA, Stats, error) {
 	start := time.Now()
 	if draw != nil {
 		r.seq++
 	}
 	t := &r.target
+	if t.color == nil {
+		return nil, Stats{}, &Error{Op: "render", Err: errors.New("no main target; call Resize first")}
+	}
 	st := Stats{Seq: r.seq, BytesPerRow: t.bytesPerRow}
 
 	if draw == nil && !t.drawn {
 		return nil, st, &Error{Op: "read pixels", Err: fmt.Errorf("no frame drawn since the target was created")}
+	}
+	if dst != nil {
+		if err := validateDestination(dst, t.width, t.height); err != nil {
+			return nil, st, err
+		}
 	}
 	enc, err := r.device.CreateCommandEncoder(&wgpu.CommandEncoderDescriptor{Label: r.label + ":frame"})
 	if err != nil {
@@ -622,7 +701,7 @@ func (r *Renderer) render(ctx context.Context, draw func(*Frame) error, readback
 		return nil, st, nil
 	}
 
-	img, mapped, copied, err := mapImage(ctx, r.device, t.staging, t.width, t.height, t.bytesPerRow)
+	img, mapped, copied, err := mapImageInto(ctx, r.device, t.staging, t.width, t.height, t.bytesPerRow, dst)
 	if err != nil {
 		// Do not map this buffer again. gogpu keeps the abandoned request
 		// registered against its submission and resolves it together with

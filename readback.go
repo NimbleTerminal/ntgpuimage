@@ -62,43 +62,56 @@ func encodeReadback(enc *wgpu.CommandEncoder, tex *wgpu.Texture, staging *wgpu.B
 // mapImage maps a staging buffer filled by a submitted encodeReadback, copies
 // its rows into a new image, and unmaps it. It reports the time spent waiting
 // for the map and copying. A cancelled ctx returns ctx.Err() and leaves the
-// buffer unmapped, so the next readback can map it again; the GPU may then
-// still be executing the copy.
+// buffer unmapped; the caller must release it after failure because the GPU
+// may still be executing the copy and tracking its abandoned map request.
 func mapImage(ctx context.Context, dev *wgpu.Device, staging *wgpu.Buffer, w, h, stride int) (_ *image.NRGBA, mapped, copied time.Duration, err error) {
+	return mapImageInto(ctx, dev, staging, w, h, stride, nil)
+}
+
+func mapImageInto(ctx context.Context, dev *wgpu.Device, staging *wgpu.Buffer, w, h, stride int, dst *image.NRGBA) (*image.NRGBA, time.Duration, time.Duration, error) {
+	img := dst
+	mapped, copied, err := mapStaging(ctx, dev, staging, uint64(stride*h), func(src []byte) error {
+		if img == nil {
+			img = image.NewNRGBA(image.Rect(0, 0, w, h))
+		}
+		return copyImageRows(img, src, w, h, stride)
+	})
+	if err != nil {
+		return nil, mapped, copied, err
+	}
+	return img, mapped, copied, nil
+}
+
+// mapStaging consumes mapped bytes before releasing the range and unmapping.
+// After a failed map the caller must release the buffer rather than reuse it.
+func mapStaging(ctx context.Context, dev *wgpu.Device, staging *wgpu.Buffer, size uint64, consume func([]byte) error) (mapped, copied time.Duration, err error) {
 	start := time.Now()
-	size := uint64(stride * h)
 	pending, err := staging.MapAsync(wgpu.MapModeRead, 0, size)
 	if err != nil {
-		return nil, 0, 0, &Error{Op: "map", Err: err}
+		return 0, 0, &Error{Op: "map", Err: err}
 	}
 	err = waitMapped(ctx, dev, pending)
 	pending.Release()
 	if err != nil {
-		// A cancelled wait leaves the buffer pending; Unmap aborts the map.
 		_ = staging.Unmap()
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, 0, 0, ctxErr
+			return 0, 0, ctxErr
 		}
-		return nil, 0, 0, &Error{Op: "map", Err: err}
+		return 0, 0, &Error{Op: "map", Err: err}
 	}
 	mapped = time.Since(start)
-
 	start = time.Now()
 	rng, err := staging.MappedRange(0, size)
 	if err != nil {
 		_ = staging.Unmap()
-		return nil, 0, 0, &Error{Op: "mapped range", Err: err}
+		return mapped, 0, &Error{Op: "mapped range", Err: err}
 	}
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	err = depad(img.Pix, rng.Bytes(), w, h, stride)
+	err = consume(rng.Bytes())
 	rng.Release()
 	if unmapErr := staging.Unmap(); unmapErr != nil && err == nil {
 		err = &Error{Op: "unmap", Err: unmapErr}
 	}
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return img, mapped, time.Since(start), nil
+	return mapped, time.Since(start), err
 }
 
 // Bounds for the delay between polls in pollUntil. A frame takes about a
@@ -124,4 +137,29 @@ func pollUntil(ctx context.Context, poll func() (done bool, err error)) error {
 		case <-timer.C:
 		}
 	}
+}
+
+// validateDestination accepts subimages and padded strides, but rejects malformed
+// public image.NRGBA values before any mapping or GPU submission.
+func validateDestination(dst *image.NRGBA, w, h int) error {
+	if dst == nil || w <= 0 || h <= 0 || dst.Rect.Dx() != w || dst.Rect.Dy() != h || dst.Stride < w*4 {
+		return &Error{Op: "read pixels into", Err: fmt.Errorf("destination must be a %dx%d NRGBA image with a valid stride", w, h)}
+	}
+	if len(dst.Pix) < w*4 || (h > 1 && dst.Stride > (len(dst.Pix)-w*4)/(h-1)) {
+		return &Error{Op: "read pixels into", Err: fmt.Errorf("destination pixel buffer is too short")}
+	}
+	return nil
+}
+
+func copyImageRows(dst *image.NRGBA, src []byte, w, h, stride int) error {
+	if err := validateDestination(dst, w, h); err != nil {
+		return err
+	}
+	if stride < w*4 || len(src) < stride*(h-1)+w*4 {
+		return fmt.Errorf("ntgpuimage: source pixel buffer is too short")
+	}
+	for y := range h {
+		copy(dst.Pix[y*dst.Stride:y*dst.Stride+w*4], src[y*stride:y*stride+w*4])
+	}
+	return nil
 }

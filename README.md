@@ -95,10 +95,15 @@ relative paths so the site also works under the repository's Pages subpath.
 | Call | Purpose |
 | --- | --- |
 | `New(ctx, Options)` | Create the device and the first target. |
-| `Renderer.Do(func(*wgpu.Device) error)` | Run setup or teardown on the GPU thread. |
+| `NewFromDevice(dev, Options)`, `NewFromProvider(provider, Options)` | Borrow a host device; execute on the caller's goroutine. |
+| `Renderer.Do(func(*wgpu.Device) error)` | Run serialized setup or teardown. |
 | `Renderer.Render(ctx, draw)` | Draw, then read the frame back in the same submission. |
 | `Renderer.RenderToTexture(ctx, draw)` | Draw without reading back. |
 | `Renderer.ReadPixels(ctx)` | Read back the most recent frame. |
+| `Renderer.ReadPixelsInto(ctx, dst)` | Read into reusable NRGBA storage, including subimages. |
+| `Renderer.ReadRegion(ctx, rect)` | Read a rectangle from the main color target. |
+| `Renderer.ReadDepth(ctx, x, y)` | Read one depth value from a Depth32Float main target. |
+| `Renderer.RenderTexture(enc, texture, draw)` | Record a texture draw and mip generation in a host encoder. |
 | `Renderer.Resize(w, h)`, `Size()` | Replace the target. A failed resize keeps the old one. |
 | `Renderer.AdapterInfo()` | Adapter name, backend, and device type. |
 | `Renderer.UploadTexture(image, TextureOptions)` | Create a sampled texture from a Go image. |
@@ -301,11 +306,11 @@ img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
 
 ## Threading and ownership
 
-- Each `Renderer` owns its instance, adapter, device, target, and textures,
+- A renderer created with `New` owns its instance, adapter, device, target, and textures,
   and releases them in `Close`. Calls that need the device return
   `ErrClosed` after it closes.
-- All GPU work runs on one goroutine pinned to an OS thread. Calls from any
-  goroutine are serialized, with one frame in flight.
+- With `New`, GPU work runs on one goroutine pinned to an OS thread. Calls
+  from any goroutine are serialized, with one frame in flight.
 - Do not call methods that queue GPU work from inside `Do` or a draw
   callback. They would wait for the thread they already occupy. Texture
   handle accessors such as `BindGroup` and `BindGroupLayout` are safe to
@@ -314,13 +319,55 @@ img, _, err := r.Render(ctx, func(f *ntgpuimage.Frame) error {
   before `Close`.
 - Do not keep the device, encoder, or views from a callback for use on
   another goroutine.
-- Sharing a device owned by another library is not supported yet.
-  [DESIGN.md](DESIGN.md#accepting-an-externally-owned-device) describes a
-  possible API.
+- `NewFromDevice` and `NewFromProvider` borrow the device. Their methods run
+  on the caller's goroutine, serialized with a cancellable lock. The host must
+  enforce thread affinity and coordinate other users of the device and queue.
+  Call `Close` on the host thread before releasing the host device. It releases
+  only renderer-created resources. Adapter-selection options are ignored.
+
+## Using a host device
+
+```go
+// Run on the host's GPU thread. No main target is allocated yet.
+r, err := ntgpuimage.NewFromDevice(dev, ntgpuimage.Options{})
+if err != nil { return err }
+// Keep r alive until all host work using its textures has finished.
+
+texture, err := r.NewTexture(512, 512, ntgpuimage.TextureOptions{
+    RenderTarget: true, Mipmaps: true, SRGB: true,
+})
+if err != nil { return err }
+err = r.RenderTexture(enc, texture, func(f *ntgpuimage.Frame) error {
+    return drawProcedural(f) // record and end passes using f.Color
+})
+if err != nil { return err } // host discards enc on failure
+// The host may now sample texture.BindGroup() in a later pass of enc.
+// The host finishes and submits enc.
+```
+
+Submit host encoders in recording order, before using affected textures in
+another encoder, an update, or readback. Later passes in the same encoder may
+sample them. Do not release their resources until the GPU finishes. Render a
+mipmapped texture at most once per encoder. If an encoder with successful
+`RenderTexture` calls is abandoned or fails submission, recreate its affected
+textures: their tracked layouts assume those commands execute. A callback
+must not call renderer methods; it already holds the serialization lock.
+
+Both constructors accept `Options{Width: 0, Height: 0}`. Use `Resize(w, h)`
+before rendering or reading the main target; `Render` cannot infer dimensions
+from its callback. `NewFromDevice` reports zero adapter metadata;
+`NewFromProvider` reports it when the provider exposes a wgpu adapter.
+
+For captures, `RenderToTexture` followed by `ReadPixelsInto(ctx, dst)` reuses
+`dst.Pix`. For picking, `ReadRegion(ctx, image.Rect(x, y, x+1, y+1))` copies
+only one color pixel. Enable `Options.DepthFormat: gputypes.TextureFormatDepth32Float`
+and store depth in the render pass to use `ReadDepth(ctx, x, y)`. It returns
+the raw stored depth; WebGPU requires a full depth-subresource copy even
+for a single pixel. All these readbacks share cancellable mapping and `Stats`.
 
 ## Cancellation
 
-`Render`, `RenderToTexture`, and both `ReadPixels` methods take a context.
+`Render`, `RenderToTexture`, and all readback methods take a context.
 
 - A call waiting for the GPU thread returns `ctx.Err()` when the context
   is cancelled or expires, without drawing.
