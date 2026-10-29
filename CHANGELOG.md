@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Updated naga to v0.20.4.
+
 ## `0.5.0` — 2026-10-28
 
 ### Interactive browser showcase
