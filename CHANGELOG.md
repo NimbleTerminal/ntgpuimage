@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## `0.6.0` — 2026-10-30
 
 - Borrow host devices with `NewFromDevice` or `NewFromProvider`; calls execute
   on the caller's goroutine and `Close` preserves the host device.
